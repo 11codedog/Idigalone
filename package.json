@@ -1,0 +1,13 @@
+{
+  "name": "Idigalone",
+  "uuid": "c18cd65a-1c3e-4281-a1de-3955ba8cebfd",
+  "creator": {
+    "version": "3.8.8"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --skipLibCheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
