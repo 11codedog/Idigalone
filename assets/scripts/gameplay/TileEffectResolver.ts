@@ -1,44 +1,23 @@
-import { RunState, TileType } from '../core/GameTypes';
-import { TILE_CONFIG } from '../config/GameConfig';
+import { OreType, RunState, TileType } from '../core/GameTypes';
+import { isOreType, TILE_CONFIG } from '../config/GameConfig';
+import { InventoryDelta } from '../skill/InventoryCalculator';
 
 export interface TileEffectResult {
-  collectedOre?: TileType;
+  collectedOre?: OreType;
   recoveredOxygen: number;
-  copperDelta: number;
-  silverDelta: number;
-  backpackUsedDelta: number;
+  inventoryDelta: InventoryDelta;
 }
 
 export class TileEffectResolver {
-  public canApply(tileType: TileType, run: RunState): boolean {
-    const tileConfig = TILE_CONFIG[tileType];
-    if (tileConfig.backpackSize <= 0) {
-      return true;
-    }
-
-    return run.backpackUsed + tileConfig.backpackSize <= run.backpackCapacity;
-  }
-
   public resolve(tileType: TileType, run: RunState): TileEffectResult {
-    // Resolver 只计算 delta，不直接改 RunState；真正的状态写入统一交给 RunManager。
     const result: TileEffectResult = {
       recoveredOxygen: 0,
-      copperDelta: 0,
-      silverDelta: 0,
-      backpackUsedDelta: 0,
+      inventoryDelta: {},
     };
 
-    if (tileType === 'copper') {
-      result.collectedOre = 'copper';
-      result.copperDelta = 1;
-      result.backpackUsedDelta = TILE_CONFIG.copper.backpackSize;
-      return result;
-    }
-
-    if (tileType === 'silver') {
-      result.collectedOre = 'silver';
-      result.silverDelta = 1;
-      result.backpackUsedDelta = TILE_CONFIG.silver.backpackSize;
+    if (isOreType(tileType)) {
+      result.collectedOre = tileType;
+      result.inventoryDelta[tileType] = 1;
       return result;
     }
 

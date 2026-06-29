@@ -5,7 +5,8 @@
     "version": "3.8.8"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --skipLibCheck"
+    "typecheck": "tsc --noEmit --skipLibCheck",
+    "test": "node tools/run-tests.js"
   },
   "devDependencies": {
     "typescript": "^5.4.5"

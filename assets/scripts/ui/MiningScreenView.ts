@@ -1,9 +1,21 @@
 import { Color } from 'cc';
-import { BuffId, GridPosition, SaveData, RunState, UpgradeId } from '../core/GameTypes';
-import { BUFF_CONFIG, getUpgradeCost, UPGRADE_CONFIG } from '../config/GameConfig';
+import { BuffId, GridPosition, RunState, SaveData, UpgradeId } from '../core/GameTypes';
+import {
+  BUFF_CONFIG,
+  getUpgradeCost,
+  ORE_TYPES,
+  RUN_CONFIG,
+  TILE_CONFIG,
+  UPGRADE_CONFIG,
+} from '../config/GameConfig';
 import { MoveDirection, RunManager } from '../gameplay/RunManager';
+import { inventoryCalculator } from '../skill/InventoryCalculator';
 import { MineGridView } from './MineGridView';
+import { RunHudView } from './RunHudView';
+import { RunFooterView } from './RunFooterView';
+import { createRunScreenLayout, RunScreenLayout } from './RunScreenLayout';
 import { RunTextPresenter } from './RunTextPresenter';
+import { ScreenBackdropView } from './ScreenBackdropView';
 import { UiFactory } from './UiFactory';
 
 export type MiningScreenState =
@@ -30,6 +42,7 @@ export interface MiningScreenModel {
   lastSettlement: SettlementSnapshot | null;
   lastActionPosition: GridPosition | null;
   lastLog: string;
+  inputHint: string;
 }
 
 export interface MiningScreenActions {
@@ -40,6 +53,7 @@ export interface MiningScreenActions {
   startRun(buffId: BuffId): void;
   move(direction: MoveDirection): void;
   returnToSurface(): void | Promise<void>;
+  sellAtSurface(): void | Promise<void>;
   resumeRun(): void;
   confirmAbandonRun(): void;
   buyUpgrade(upgradeId: UpgradeId): void | Promise<void>;
@@ -47,15 +61,23 @@ export interface MiningScreenActions {
 
 export class MiningScreenView {
   private readonly gridView: MineGridView;
+  private readonly backdropView: ScreenBackdropView;
+  private readonly hudView: RunHudView;
+  private readonly footerView: RunFooterView;
   private readonly textPresenter = new RunTextPresenter();
 
   public constructor(private readonly ui: UiFactory) {
     this.gridView = new MineGridView(ui);
+    this.backdropView = new ScreenBackdropView(ui);
+    this.hudView = new RunHudView(ui);
+    this.footerView = new RunFooterView(ui);
   }
 
   public render(model: MiningScreenModel, actions: MiningScreenActions): void {
     this.ui.clear();
-    this.ui.backdrop();
+    this.backdropView.render(model.screen, model.runManager?.run ?? null);
+    let logY = -410;
+    let logWidth = 660;
 
     if (model.screen === 'loading') {
       this.renderBaseText('读取中', '正在读取本地存档...');
@@ -64,7 +86,10 @@ export class MiningScreenView {
     } else if (model.screen === 'buffSelect') {
       this.renderBuffSelect(model.pendingBuffChoices, actions);
     } else if (model.screen === 'running') {
-      this.renderRunning(model, actions);
+      const layout = createRunScreenLayout(this.ui.getLayoutMetrics());
+      this.renderRunning(model, actions, layout);
+      logY = layout.logY;
+      logWidth = layout.logWidth;
     } else if (model.screen === 'pause') {
       this.renderPause(model.runManager?.run ?? null, actions);
     } else if (model.screen === 'settlement') {
@@ -76,10 +101,10 @@ export class MiningScreenView {
     this.ui.label({
       text: `日志：${model.lastLog}`,
       x: 0,
-      y: -410,
+      y: logY,
       fontSize: 18,
       color: new Color(255, 230, 150, 255),
-      width: 660,
+      width: logWidth,
       height: 44,
     });
   }
@@ -124,47 +149,30 @@ export class MiningScreenView {
     this.ui.button({ text: '返回首页', x: 0, y: -310, onClick: actions.showHome, width: 180, height: 52 });
   }
 
-  private renderRunning(model: MiningScreenModel, actions: MiningScreenActions): void {
+  private renderRunning(
+    model: MiningScreenModel,
+    actions: MiningScreenActions,
+    layout: RunScreenLayout,
+  ): void {
     const run = model.runManager?.run;
     if (!run || !model.runManager) {
       actions.showHome();
       return;
     }
 
+    this.hudView.render(run, model.selectedBuff, layout.hud);
     this.ui.label({
-      text: this.textPresenter.statusText(run, model.selectedBuff),
+      text: '图例：蓝=玩家 深色=空地 棕=泥土 灰=石头\n橙=铜 灰白=铁 银=银 金=金 蓝绿=水晶 黑紫=黑曜 绿=氧气',
       x: 0,
-      y: 355,
-      fontSize: 18,
-      color: this.textPresenter.statusColor(run),
-      width: 680,
-      height: 64,
-    });
-    this.ui.label({
-      text: this.textPresenter.warningText(run),
-      x: 0,
-      y: 302,
-      fontSize: 18,
-      color: this.textPresenter.warningColor(run),
-      width: 660,
-      height: 32,
-    });
-    this.ui.label({
-      text: '图例：蓝=玩家  深色=空地  棕=泥土  灰=石头\n橙=铜矿  银=银矿  绿=氧气包',
-      x: 0,
-      y: 270,
+      y: layout.legendY,
       fontSize: 15,
       color: new Color(210, 240, 255, 255),
-      width: 660,
+      width: layout.legendWidth,
       height: 48,
     });
-    this.gridView.render(model.runManager, model.lastActionPosition);
+    this.gridView.render(model.runManager, model.lastActionPosition, layout.grid);
 
-    this.ui.button({ text: '暂停', x: -250, y: -285, onClick: actions.showPause, width: 160, height: 52 });
-    this.ui.button({ text: '上', x: 145, y: -260, onClick: () => actions.move('up'), width: 88, height: 48 });
-    this.ui.button({ text: '左', x: 45, y: -320, onClick: () => actions.move('left'), width: 88, height: 48 });
-    this.ui.button({ text: '下', x: 145, y: -320, onClick: () => actions.move('down'), width: 88, height: 48 });
-    this.ui.button({ text: '右', x: 245, y: -320, onClick: () => actions.move('right'), width: 88, height: 48 });
+    this.footerView.render(model.runManager, run, model.inputHint, actions, layout.footer);
   }
 
   private renderPause(run: RunState | null, actions: MiningScreenActions): void {
@@ -189,17 +197,7 @@ export class MiningScreenView {
       return;
     }
 
-    this.renderBaseText(
-      '本局结算',
-      [
-        `结束原因：${settlement.reason}`,
-        `最大深度：${settlement.run.depth}m`,
-        `铜矿：${settlement.run.inventory.copper}`,
-        `银矿：${settlement.run.inventory.silver}`,
-        `本局收入：${settlement.earnedCoins}`,
-        `当前金币：${save.coins}`,
-      ].join('\n'),
-    );
+    this.renderBaseText('本局结算', this.formatSettlementBody(settlement, save));
 
     this.ui.button({ text: '再来一局', x: -200, y: -275, onClick: actions.showBuffSelect, width: 170, height: 54 });
     this.ui.button({ text: '升级装备', x: 0, y: -275, onClick: actions.showUpgrade, width: 170, height: 54 });
@@ -277,5 +275,27 @@ export class MiningScreenView {
       width: 660,
       height: 330,
     });
+  }
+
+  private formatSettlementBody(settlement: SettlementSnapshot, save: SaveData): string {
+    const oreLines = ORE_TYPES
+      .filter((oreType) => settlement.run.inventory[oreType] > 0)
+      .map((oreType) => {
+        const count = settlement.run.inventory[oreType];
+        const value = count * TILE_CONFIG[oreType].oreValue;
+        return `${TILE_CONFIG[oreType].displayName} x${count} = ${value}`;
+      });
+    const depthBonus = Math.floor(settlement.run.depth / 20) * RUN_CONFIG.depthBonusPerTwentyMeters;
+    const inventoryUsage = inventoryCalculator.calculateUsage(settlement.run.inventory);
+
+    return [
+      `结束原因：${settlement.reason}`,
+      `最大深度：${settlement.run.depth}m`,
+      oreLines.length > 0 ? oreLines.join('\n') : '没有带回矿石',
+      `矿石压缩：节省 ${inventoryUsage.savedSlots} 格背包`,
+      `深度基础奖励：${depthBonus}`,
+      `本局收入：${settlement.earnedCoins}`,
+      `当前金币：${save.coins}`,
+    ].join('\n');
   }
 }

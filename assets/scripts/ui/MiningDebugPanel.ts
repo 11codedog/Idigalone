@@ -13,6 +13,7 @@ import {
   MiningScreenView,
   SettlementSnapshot,
 } from './MiningScreenView';
+import { PlayerInputController } from './PlayerInputController';
 import { RunTextPresenter } from './RunTextPresenter';
 import { UiFactory } from './UiFactory';
 
@@ -30,6 +31,14 @@ export class MiningDebugPanel extends Component {
   private ui: UiFactory | null = null;
   private screenView: MiningScreenView | null = null;
   private readonly textPresenter = new RunTextPresenter();
+  private readonly inputController = new PlayerInputController({
+    isRunning: () => this.canMoveByInput(),
+    move: (direction: MoveDirection) => this.move(direction),
+    canSellAtSurface: () => this.canSellAtSurface(),
+    sellAtSurface: () => {
+      void this.sellAtSurface();
+    },
+  });
 
   public start(): void {
     this.ui = new UiFactory(this.node);
@@ -37,6 +46,18 @@ export class MiningDebugPanel extends Component {
     this.screenView = new MiningScreenView(this.ui);
     this.renderLoading();
     void this.initializeData();
+  }
+
+  public onEnable(): void {
+    this.inputController.enable();
+  }
+
+  public onDisable(): void {
+    this.inputController.disable();
+  }
+
+  public update(deltaTime: number): void {
+    this.inputController.update(deltaTime);
   }
 
   private get uiFactory(): UiFactory {
@@ -65,6 +86,7 @@ export class MiningDebugPanel extends Component {
       startRun: (buffId: BuffId) => this.startRun(buffId),
       move: (direction: MoveDirection) => this.move(direction),
       returnToSurface: () => this.returnToSurface(),
+      sellAtSurface: () => this.sellAtSurface(),
       resumeRun: () => this.resumeRun(),
       confirmAbandonRun: () => this.confirmAbandonRun(),
       buyUpgrade: (upgradeId: UpgradeId) => this.buyUpgrade(upgradeId),
@@ -134,12 +156,23 @@ export class MiningDebugPanel extends Component {
 
   private async returnToSurface(): Promise<void> {
     if (!this.runManager?.run) {
-      this.lastLog = '还没有可以结算的下矿局。';
+      this.lastLog = '还没有可以使用返回绳的下矿局。';
       this.render();
       return;
     }
 
     const result = this.runManager.returnToSurface();
+    await this.handleRunAction(result);
+  }
+
+  private async sellAtSurface(): Promise<void> {
+    if (!this.runManager?.run) {
+      this.lastLog = '还没有可以出售的下矿局。';
+      this.render();
+      return;
+    }
+
+    const result = this.runManager.sellAtSurface();
     await this.handleRunAction(result);
   }
 
@@ -157,10 +190,12 @@ export class MiningDebugPanel extends Component {
         earnedCoins: result.earnedCoins ?? 0,
         reason: this.textPresenter.endReason(result.endedReason),
       };
-      await saveManager.save();
+      const saveResult = await saveManager.save();
       this.runManager = null;
       this.screen = 'settlement';
-      this.lastLog = `本局结束：${this.lastSettlement.reason}，获得 ${this.lastSettlement.earnedCoins} 金币`;
+      this.lastLog = saveResult.ok
+        ? `本局结束：${this.lastSettlement.reason}，获得 ${this.lastSettlement.earnedCoins} 金币`
+        : `本局已结算，但存档写入失败：${saveResult.error ?? '未知错误'}`;
       this.render();
       return;
     }
@@ -169,14 +204,20 @@ export class MiningDebugPanel extends Component {
     this.lastActionPosition = result.position;
     const oreText = result.collectedOre ? `，获得 ${this.textPresenter.tileName(result.collectedOre)}` : '';
     const oxygenText = result.recoveredOxygen ? `，氧气 +${result.recoveredOxygen}` : '';
-    this.lastLog = `${result.type === 'move' ? '移动' : '挖掘'}到 (${result.position.x}, ${result.position.y})${oreText}${oxygenText}`;
+    const surfaceText = this.canSellAtSurface() ? '，已回到地表，可出售结算' : '';
+    this.lastLog = `${result.type === 'move' ? '移动' : '挖掘'}到 (${result.position.x}, ${result.position.y})${oreText}${oxygenText}${surfaceText}`;
     this.render();
+  }
+
+  private canSellAtSurface(): boolean {
+    const run = this.runManager?.run;
+    return Boolean(run && this.runManager?.position.y === 0 && run.depth > 0);
   }
 
   private async buyUpgrade(upgradeId: UpgradeId): Promise<void> {
     const result = await upgradeManager.buy(upgradeId);
     if (!result.ok) {
-      this.lastLog = result.reason === 'notEnoughCoins' ? `金币不足：需要 ${result.cost}` : '已经达到最高等级。';
+      this.lastLog = this.formatUpgradeFailure(result.reason, result.cost, result.error);
       this.render();
       return;
     }
@@ -202,6 +243,7 @@ export class MiningDebugPanel extends Component {
         lastSettlement: this.lastSettlement,
         lastActionPosition: this.lastActionPosition,
         lastLog: this.lastLog,
+        inputHint: this.inputController.getHint(),
       },
       this.actions,
     );
@@ -224,5 +266,21 @@ export class MiningDebugPanel extends Component {
     this.lastActionPosition = null;
     this.lastLog = '已放弃本局，未结算矿石。';
     this.showHome();
+  }
+
+  private canMoveByInput(): boolean {
+    return this.screen === 'running' && Boolean(this.runManager?.run);
+  }
+
+  private formatUpgradeFailure(reason: string | undefined, cost: number, error: string | undefined): string {
+    if (reason === 'notEnoughCoins') {
+      return `金币不足：需要 ${cost}`;
+    }
+
+    if (reason === 'saveFailed') {
+      return `升级失败：存档写入失败 ${error ?? ''}`;
+    }
+
+    return '已经达到最高等级。';
   }
 }

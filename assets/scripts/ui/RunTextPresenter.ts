@@ -1,41 +1,16 @@
 import { Color } from 'cc';
-import { BuffId, RunState, TileType } from '../core/GameTypes';
-import { BUFF_CONFIG } from '../config/GameConfig';
+import { RunState, TileType } from '../core/GameTypes';
+import { TILE_CONFIG } from '../config/GameConfig';
 import { RunBlockReason, RunEndReason } from '../gameplay/RunManager';
 
 export class RunTextPresenter {
-  public statusText(run: RunState, selectedBuff: BuffId | null): string {
-    const buffText = selectedBuff ? BUFF_CONFIG[selectedBuff].displayName : '无';
-    return [
-      `增益：${buffText}`,
-      `深度：${run.depth}m`,
-      `氧气：${run.oxygen}/${run.maxOxygen}`,
-      `背包：${run.backpackUsed}/${run.backpackCapacity}`,
-      `铜矿：${run.inventory.copper}`,
-      `银矿：${run.inventory.silver}`,
-      `金币预估：${run.coinsPreview}`,
-    ].join('   ');
-  }
-
-  public statusColor(run: RunState): Color {
-    if (this.isOxygenLow(run)) {
-      return new Color(255, 110, 100, 255);
-    }
-
-    if (this.isBackpackFull(run)) {
-      return new Color(255, 210, 90, 255);
-    }
-
-    return Color.WHITE;
-  }
-
   public warningText(run: RunState): string {
     if (this.isOxygenLow(run)) {
-      return '氧气紧张，考虑返回结算或继续贪一把。';
+      return '氧气紧张，考虑回到地表出售，或用返回绳结算。';
     }
 
     if (this.isBackpackFull(run)) {
-      return '背包已满，返回结算或升级背包。';
+      return '背包已满，回到地表出售后升级背包。';
     }
 
     return '向上只能走已经挖空的路，不能向上挖。';
@@ -76,6 +51,10 @@ export class RunTextPresenter {
       return '已经到边界';
     }
 
+    if (reason === 'notAtSurface') {
+      return '需要先回到 0m 地表';
+    }
+
     return '未知原因';
   }
 
@@ -84,27 +63,19 @@ export class RunTextPresenter {
       return '氧气耗尽';
     }
 
-    if (reason === 'manualReturn') {
-      return '主动返回';
+    if (reason === 'returnRope') {
+      return '返回绳结算';
+    }
+
+    if (reason === 'surfaceSell') {
+      return '地表出售';
     }
 
     return '未知';
   }
 
   public tileName(tileType: TileType): string {
-    if (tileType === 'copper') {
-      return '铜矿';
-    }
-
-    if (tileType === 'silver') {
-      return '银矿';
-    }
-
-    if (tileType === 'oxygen') {
-      return '氧气包';
-    }
-
-    return tileType;
+    return TILE_CONFIG[tileType].displayName;
   }
 
   private isOxygenLow(run: RunState): boolean {

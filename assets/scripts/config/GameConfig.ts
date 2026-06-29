@@ -1,5 +1,6 @@
 import {
   BuffId,
+  OreType,
   PlayerStats,
   SaveData,
   TileDefinition,
@@ -18,6 +19,54 @@ export const DEFAULT_SAVE_DATA: SaveData = {
     oxygenTank: 1,
     backpack: 1,
     oreValue: 1,
+  },
+};
+
+export const ORE_TYPES: OreType[] = ['copper', 'iron', 'silver', 'gold', 'crystal', 'obsidian'];
+
+export interface OreDepthConfig {
+  type: OreType;
+  minDepth: number;
+  baseWeight: number;
+  depthWeightGrowth: number;
+}
+
+export const ORE_DEPTH_CONFIG: Record<OreType, OreDepthConfig> = {
+  copper: {
+    type: 'copper',
+    minDepth: 1,
+    baseWeight: 80,
+    depthWeightGrowth: 0.2,
+  },
+  iron: {
+    type: 'iron',
+    minDepth: 24,
+    baseWeight: 42,
+    depthWeightGrowth: 0.24,
+  },
+  silver: {
+    type: 'silver',
+    minDepth: 40,
+    baseWeight: 28,
+    depthWeightGrowth: 0.2,
+  },
+  gold: {
+    type: 'gold',
+    minDepth: 65,
+    baseWeight: 16,
+    depthWeightGrowth: 0.16,
+  },
+  crystal: {
+    type: 'crystal',
+    minDepth: 95,
+    baseWeight: 9,
+    depthWeightGrowth: 0.12,
+  },
+  obsidian: {
+    type: 'obsidian',
+    minDepth: 155,
+    baseWeight: 5,
+    depthWeightGrowth: 0.08,
   },
 };
 
@@ -58,13 +107,49 @@ export const TILE_CONFIG: Record<TileType, TileDefinition> = {
     backpackSize: 1,
     oxygenRecover: 0,
   },
+  iron: {
+    type: 'iron',
+    displayName: '铁矿',
+    hardness: 2,
+    oxygenCost: 2,
+    oreValue: 11,
+    backpackSize: 1,
+    oxygenRecover: 0,
+  },
   silver: {
     type: 'silver',
     displayName: '银矿',
     hardness: 2,
     oxygenCost: 2,
-    oreValue: 12,
+    oreValue: 18,
     backpackSize: 1,
+    oxygenRecover: 0,
+  },
+  gold: {
+    type: 'gold',
+    displayName: '金矿',
+    hardness: 3,
+    oxygenCost: 3,
+    oreValue: 35,
+    backpackSize: 2,
+    oxygenRecover: 0,
+  },
+  crystal: {
+    type: 'crystal',
+    displayName: '水晶',
+    hardness: 3,
+    oxygenCost: 3,
+    oreValue: 70,
+    backpackSize: 2,
+    oxygenRecover: 0,
+  },
+  obsidian: {
+    type: 'obsidian',
+    displayName: '黑曜矿',
+    hardness: 4,
+    oxygenCost: 4,
+    oreValue: 150,
+    backpackSize: 3,
     oxygenRecover: 0,
   },
   oxygen: {
@@ -132,7 +217,7 @@ export const BUFF_CONFIG: Record<BuffId, BuffConfig> = {
   richVeins: {
     id: 'richVeins',
     displayName: '富矿嗅觉',
-    description: '本局稀有矿出现率提升。',
+    description: '本局矿脉出现率提升。',
   },
   biggerBag: {
     id: 'biggerBag',
@@ -169,14 +254,35 @@ export const BASE_PLAYER_STATS = {
 
 export const RUN_CONFIG = {
   gridWidth: 9,
-  generatedDepth: 80,
+  generatedDepth: 220,
   moveOxygenCost: 1,
   oxygenPerTankLevel: 10,
   backpackSlotsPerLevel: 3,
   oreValueMultiplierPerLevel: 0.1,
   oxygenPackMinDepth: 4,
   oxygenPackChance: 0.06,
+  depthBonusPerTwentyMeters: 6,
+  veinBaseChance: 0.18,
+  veinDepthChanceGrowth: 0.0012,
+  backgroundOreChance: 0.1,
 };
+
+export function isOreType(tileType: TileType): tileType is OreType {
+  return ORE_TYPES.indexOf(tileType as OreType) >= 0;
+}
+
+export function getAvailableOreTypes(depth: number): OreType[] {
+  return ORE_TYPES.filter((oreType) => depth >= ORE_DEPTH_CONFIG[oreType].minDepth);
+}
+
+export function getOreWeight(oreType: OreType, depth: number): number {
+  const config = ORE_DEPTH_CONFIG[oreType];
+  if (depth < config.minDepth) {
+    return 0;
+  }
+
+  return config.baseWeight + (depth - config.minDepth) * config.depthWeightGrowth;
+}
 
 export function getUpgradeCost(upgradeId: UpgradeId, currentLevel: number): number {
   const config = UPGRADE_CONFIG[upgradeId];

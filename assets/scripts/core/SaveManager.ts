@@ -2,6 +2,7 @@ import { SaveData, UpgradeId } from './GameTypes';
 import { gameState, GameState } from './GameState';
 import { DEFAULT_SAVE_DATA, SAVE_VERSION } from '../config/GameConfig';
 import { PlatformManager } from '../platform/PlatformManager';
+import { PlatformResult } from '../platform/IPlatform';
 
 export class SaveManager {
   public static readonly storageKey = 'save_data';
@@ -20,11 +21,24 @@ export class SaveManager {
     return save;
   }
 
-  public async save(save: SaveData = this.state.save): Promise<void> {
+  public async save(save: SaveData = this.state.save): Promise<PlatformResult<SaveData>> {
     await PlatformManager.init();
     const normalized = this.normalizeSave(save);
+    const result = await PlatformManager.platform.setStorage(SaveManager.storageKey, normalized);
+    if (!result.ok) {
+      console.warn(`[SaveManager] 存档写入失败：${result.error ?? '未知错误'}`);
+      return {
+        ok: false,
+        error: result.error ?? 'Save storage failed.',
+        data: normalized,
+      };
+    }
+
     this.state.setSave(normalized);
-    await PlatformManager.platform.setStorage(SaveManager.storageKey, normalized);
+    return {
+      ok: true,
+      data: normalized,
+    };
   }
 
   public async reset(): Promise<SaveData> {

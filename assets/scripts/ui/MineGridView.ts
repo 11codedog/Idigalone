@@ -1,6 +1,8 @@
-import { Color, tween, Vec3 } from 'cc';
+import { Color, Node, tween, Vec3 } from 'cc';
 import { TileType } from '../core/GameTypes';
 import { RunManager } from '../gameplay/RunManager';
+import { MineGridLayout } from './RunScreenLayout';
+import { UiColors } from './UiColors';
 import { UiFactory } from './UiFactory';
 
 interface GridPosition {
@@ -10,37 +12,29 @@ interface GridPosition {
 
 export class MineGridView {
   private readonly visibleRows = 10;
-  private readonly cellSize = 30;
-  private readonly gap = 4;
-  private readonly startScreenY = 218;
 
   public constructor(private readonly ui: UiFactory) {}
 
-  public render(runManager: RunManager, lastActionPosition: GridPosition | null): void {
+  public render(
+    runManager: RunManager,
+    lastActionPosition: GridPosition | null,
+    layout: MineGridLayout,
+  ): void {
     const player = runManager.position;
     const startY = Math.max(0, player.y - 3);
     const gridWidth = runManager.grid.width;
-    const startX = -((gridWidth - 1) * (this.cellSize + this.gap)) / 2 + 35;
+    const startX = -((gridWidth - 1) * (layout.cellSize + layout.gap)) / 2;
 
     for (let row = 0; row < this.visibleRows; row += 1) {
       const y = startY + row;
-      const screenY = this.startScreenY - row * (this.cellSize + this.gap);
-      this.ui.label({
-        text: `${this.formatDepth(y)}m`,
-        x: -190,
-        y: screenY,
-        fontSize: 16,
-        color: new Color(210, 240, 255, 255),
-        width: 70,
-        height: this.cellSize,
-      });
+      const screenY = layout.startScreenY - row * (layout.cellSize + layout.gap);
 
       for (let x = 0; x < gridWidth; x += 1) {
         const isPlayer = player.x === x && player.y === y;
         const isRecentAction = Boolean(lastActionPosition?.x === x && lastActionPosition.y === y);
         const tileType = runManager.grid.getTile({ x, y }).type;
-        const screenX = startX + x * (this.cellSize + this.gap);
-        this.createTileCell(tileType, isPlayer, isRecentAction, screenX, screenY);
+        const screenX = startX + x * (layout.cellSize + layout.gap);
+        this.createTileCell(tileType, isPlayer, isRecentAction, screenX, screenY, layout.cellSize);
       }
     }
   }
@@ -51,17 +45,20 @@ export class MineGridView {
     isRecentAction: boolean,
     x: number,
     y: number,
+    cellSize: number,
   ): void {
     const node = this.ui.rect({
       name: 'Tile',
       x,
       y,
-      width: this.cellSize,
-      height: this.cellSize,
-      fillColor: isPlayer ? new Color(80, 180, 255, 255) : this.getTileColor(tileType),
+      width: cellSize,
+      height: cellSize,
+      fillColor: isPlayer ? UiColors.tilePlayer : this.getTileColor(tileType),
       strokeColor: this.getTileStrokeColor(isPlayer, isRecentAction),
       strokeWidth: isPlayer ? 3 : isRecentAction ? 2 : 1,
     });
+
+    this.renderTileArt(tileType, isPlayer, node, cellSize);
 
     if (!isPlayer) {
       return;
@@ -77,52 +74,102 @@ export class MineGridView {
       text: '@',
       x: 0,
       y: 0,
-      fontSize: 16,
+      fontSize: Math.max(13, Math.round(cellSize * 0.55)),
       color: Color.WHITE,
-      width: this.cellSize,
-      height: this.cellSize,
+      width: cellSize,
+      height: cellSize,
       parent: node,
       name: 'PlayerText',
     });
   }
 
-  private getTileColor(tileType: TileType): Color {
-    if (tileType === 'empty') {
-      return new Color(30, 38, 45, 255);
+  private renderTileArt(tileType: TileType, isPlayer: boolean, parent: Node, cellSize: number): void {
+    const path = this.getTileArtPath(tileType, isPlayer);
+    if (!path) {
+      return;
     }
 
-    if (tileType === 'dirt') {
-      return new Color(120, 78, 40, 255);
-    }
+    this.ui.image({
+      name: isPlayer ? 'MinerSprite' : 'OreSprite',
+      path,
+      x: 0,
+      y: 0,
+      width: cellSize - 4,
+      height: cellSize - 4,
+      parent,
+    });
+  }
 
-    if (tileType === 'stone') {
-      return new Color(95, 105, 115, 255);
+  private getTileArtPath(tileType: TileType, isPlayer: boolean): string | null {
+    if (isPlayer) {
+      return 'art/sprites/miner_protagonist';
     }
 
     if (tileType === 'copper') {
-      return new Color(190, 105, 45, 255);
+      return 'art/sprites/ore_copper';
+    }
+
+    if (tileType === 'silver') {
+      return 'art/sprites/ore_silver';
+    }
+
+    return null;
+  }
+
+  private getTileColor(tileType: TileType): Color {
+    if (tileType === 'empty') {
+      return UiColors.tileEmpty;
+    }
+
+    if (tileType === 'dirt') {
+      return UiColors.tileDirt;
+    }
+
+    if (tileType === 'stone') {
+      return UiColors.tileStone;
+    }
+
+    if (tileType === 'copper') {
+      return UiColors.tileCopper;
+    }
+
+    if (tileType === 'iron') {
+      return UiColors.tileIron;
+    }
+
+    if (tileType === 'silver') {
+      return UiColors.tileSilver;
+    }
+
+    if (tileType === 'gold') {
+      return UiColors.tileGold;
+    }
+
+    if (tileType === 'crystal') {
+      return UiColors.tileCrystal;
+    }
+
+    if (tileType === 'obsidian') {
+      return UiColors.tileObsidian;
     }
 
     if (tileType === 'oxygen') {
-      return new Color(60, 175, 130, 255);
+      return UiColors.tileOxygen;
     }
 
-    return new Color(185, 195, 210, 255);
+    return UiColors.tileFallback;
   }
 
   private getTileStrokeColor(isPlayer: boolean, isRecentAction: boolean): Color {
     if (isPlayer) {
-      return new Color(255, 255, 255, 255);
+      return UiColors.tilePlayerStroke;
     }
 
     if (isRecentAction) {
-      return new Color(255, 230, 120, 255);
+      return UiColors.tileRecentStroke;
     }
 
-    return new Color(5, 8, 10, 255);
+    return UiColors.tileNormalStroke;
   }
 
-  private formatDepth(depth: number): string {
-    return depth < 10 ? `0${depth}` : `${depth}`;
-  }
 }

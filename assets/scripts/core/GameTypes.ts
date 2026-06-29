@@ -1,6 +1,8 @@
 export type GamePhase = 'boot' | 'home' | 'running' | 'paused' | 'settlement';
 
-export type TileType = 'empty' | 'dirt' | 'stone' | 'copper' | 'silver' | 'oxygen';
+export type OreType = 'copper' | 'iron' | 'silver' | 'gold' | 'crystal' | 'obsidian';
+
+export type TileType = 'empty' | 'dirt' | 'stone' | 'oxygen' | OreType;
 
 export type UpgradeId = 'pickaxe' | 'oxygenTank' | 'backpack' | 'oreValue';
 
@@ -35,10 +37,7 @@ export interface PlayerStats {
   oreValueMultiplier: number;
 }
 
-export interface RunInventory {
-  copper: number;
-  silver: number;
-}
+export type RunInventory = Record<OreType, number>;
 
 export interface RunState {
   depth: number;
@@ -66,7 +65,17 @@ export interface GameEvents {
   saveChanged: { save: SaveData };
 }
 
-// RunState / SaveData 只能从这里克隆，避免新增字段时多个手写副本漏改。
+export function createEmptyInventory(): RunInventory {
+  return {
+    copper: 0,
+    iron: 0,
+    silver: 0,
+    gold: 0,
+    crystal: 0,
+    obsidian: 0,
+  };
+}
+
 export function cloneSaveData(save: SaveData): SaveData {
   return {
     version: save.version,

@@ -55,6 +55,81 @@ platform <- business code
 | `ui/` | Cocos 组件、页面渲染、HUD 文案、UI 工厂。 |
 | `platform/` | 平台接口、Mock、抖音实现、平台管理。 |
 
+## 设计原则
+
+### 低耦合
+
+模块之间的依赖关系是单向的。一个模块改动时，不依赖它的模块不应受影响。
+
+```
+// 例：gameplay/RunManager 改了挖矿逻辑
+// core/GameState 无需修改（不依赖 gameplay）
+// ui/MiningDebugPanel 可能需要改（依赖 gameplay）
+// 但如果改的是 GameState，所有依赖它的模块都可能受影响——所以要优先保证 core 的稳定
+```
+
+实践规则：
+
+- **模块间只能按"依赖方向"图单向引用**。出现反向引用或循环引用视作违规。
+- **跨模块通信优先走接口**。`IPlatform` 是标准例子——业务代码不知道也不关心当前是抖音还是 Mock。
+- **Component 只做胶水**。Component 可以调用业务类，但业务类不引用 Component 和 `cc` 类型。
+- **新增功能先判断属于哪个模块**。不要因为方便就把玩法逻辑写到 UI 文件里，或把配置硬编码在 Manager 中。
+
+### 高复用
+
+同一段逻辑不应该在多个地方出现手写副本。判断标准：改一个需求需要改几处？
+
+```
+// 好：cloneRunState 定义在 GameTypes，RunManager 和 GameState 都引用它
+// 新增 RunState 字段只需在 cloneRunState 加一行，两处自动生效
+
+// 差：如果在 RunManager 和 GameState 各写一个 cloneRunState
+// 加字段时第一处改了第二处忘了，事件订阅者拿到不完整数据
+```
+
+实践规则：
+
+- **多处出现的对象克隆逻辑，提取到 `GameTypes.ts` 统一维护。** 当前 `cloneSaveData` 和 `cloneRunState` 是正确做法。
+- **UI 中重复出现的页面片段提取为独立 View 类。** 例如 `RunHudView`、`RunFooterView` 被 `MiningScreenView` 调用，而不是在每个 screen 中重复写。
+- **配置数据集中在 `config/`**，不散落在各模块。改数值只改一处。
+- **超过 2 处出现相同模式的代码，考虑抽函数或抽类。** 但抽之前确认它们是真的相同（而非恰好看起像），避免过早抽象。
+
+### 模块化（单一职责）
+
+一个模块、一个文件、一个类，只做一件事。
+
+```
+// RunManager：管理一局游戏的流程（start / move / end）
+// MineGrid：管理网格地图（生成 / 挖掘 / 查询）
+// KeyboardMoveController：管理键盘输入（键位映射 / 连发 / 复位）
+// ------------------------------------------------------------
+// MiningDebugPanel 不做挖矿计算，只做"按钮回调 -> 调用 RunManager -> 刷新界面"
+// KeyboardMoveController 不做游戏逻辑判断，只做"键 -> 方向"的转换
+```
+
+实践规则：
+
+- **一个文件 ≤ 300 行。** 超了说明它在做不止一件事，需要评估拆分。
+- **一个类只持有自己需要的状态。** `MiningDebugPanel` 不持有网格数据（那是 `MineGrid` 的事），`RunManager` 不持有 UI 节点（那是 View 的事）。
+- **Resolver 只计算不修改。** `TileEffectResolver.resolve()` 返回 delta 对象，调用方 `RunManager.applyTileEffect()` 负责落地修改。修改入口集中，容易追踪。
+- **Manager 持有状态不泄露。** getter 返回 clone，外部无法意外修改内部状态。
+- **新增功能先放对目录。** 不知道放哪通常是设计信号——要么模块边界模糊，要么新功能需要拆更细。
+
+### 组合优于继承
+
+Cocos Component 本身就是组合模式。业务类之间同样遵循：用依赖注入（constructor 参数）组合协作者，而不是继承基类获取能力。
+
+```
+// RunManager 的协作者通过 constructor 传入
+constructor(
+  state: GameState = gameState,
+  grid = new MineGrid(),
+  buffs = buffManager,
+  tileEffects = tileEffectResolver,
+)
+// 测试时可以传入 mock，生产环境用默认值
+```
+
 ## Cocos 组件
 
 - Component 只做胶水：生命周期、按钮回调、调用业务、组合 View。
@@ -75,7 +150,7 @@ platform <- business code
 ## 状态与事件
 
 - 事件 payload 必须自洽，监听方不应依赖读取半更新的全局状态。
-- 事件顺序必须在实现中清晰表达，不能简单套用“先更新后发事件”。
+- 事件顺序必须在实现中清晰表达，不能简单套用"先更新后发事件"。
 - 生命周期事件示例：`runEnded` 需要先携带结束快照发出，再清理当前 run，再发存档/阶段变化。
 - 修改状态机时必须查看 `docs/ENGINEERING_LESSONS.md`。
 

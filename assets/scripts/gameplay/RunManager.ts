@@ -2,32 +2,33 @@ import { gameState, GameState } from '../core/GameState';
 import {
   BuffId,
   cloneRunState,
+  createEmptyInventory,
   GridPosition,
+  OreType,
   PlayerStats,
-  RunInventory,
   RunState,
   SaveData,
-  TileType,
 } from '../core/GameTypes';
-import { getPlayerStats, RUN_CONFIG, TILE_CONFIG } from '../config/GameConfig';
+import { getPlayerStats, ORE_TYPES, RUN_CONFIG, TILE_CONFIG } from '../config/GameConfig';
 import { MineGrid, MineTile } from './MineGrid';
 import { buffManager, BuffManager } from './BuffManager';
 import { tileEffectResolver, TileEffectResolver } from './TileEffectResolver';
+import { inventoryCalculator, InventoryCalculator } from '../skill/InventoryCalculator';
 
 export type MoveDirection = 'up' | 'down' | 'left' | 'right';
 
-export type RunEndReason = 'oxygenDepleted' | 'manualReturn';
+export type RunEndReason = 'oxygenDepleted' | 'returnRope' | 'surfaceSell';
 
 export type RunActionType = 'move' | 'dig' | 'blocked' | 'ended';
 
-export type RunBlockReason = 'outOfBounds' | 'backpackFull' | 'upwardDigForbidden';
+export type RunBlockReason = 'outOfBounds' | 'backpackFull' | 'upwardDigForbidden' | 'notAtSurface';
 
 export interface RunActionResult {
   type: RunActionType;
   position: GridPosition;
   run: RunState;
   targetTile?: MineTile;
-  collectedOre?: TileType;
+  collectedOre?: OreType;
   recoveredOxygen?: number;
   reason?: RunBlockReason;
   endedReason?: RunEndReason;
@@ -40,6 +41,7 @@ export class RunManager {
   private readonly state: GameState;
   private readonly buffs: BuffManager;
   private readonly tileEffects: TileEffectResolver;
+  private readonly inventory: InventoryCalculator;
   private positionValue: GridPosition;
   private statsValue: PlayerStats | null = null;
   private activeBuffsValue: BuffId[] = [];
@@ -50,11 +52,13 @@ export class RunManager {
     grid = new MineGrid(),
     buffs = buffManager,
     tileEffects = tileEffectResolver,
+    inventory = inventoryCalculator,
   ) {
     this.state = state;
     this.grid = grid;
     this.buffs = buffs;
     this.tileEffects = tileEffects;
+    this.inventory = inventory;
     this.positionValue = {
       x: grid.centerX,
       y: 0,
@@ -83,7 +87,7 @@ export class RunManager {
       backpackUsed: 0,
       backpackCapacity: stats.backpackCapacity,
       coinsPreview: 0,
-      inventory: this.createEmptyInventory(),
+      inventory: createEmptyInventory(),
       activeBuffs: [...activeBuffs],
     };
 
@@ -97,6 +101,7 @@ export class RunManager {
       x: this.grid.centerX,
       y: 0,
     };
+    this.refreshCoinsPreview();
     this.state.startRun(run);
     return cloneRunState(run);
   }
@@ -112,8 +117,9 @@ export class RunManager {
 
     const targetTile = this.grid.getTile(target);
     if (targetTile.type === 'empty') {
+      const oxygenCost = this.getMoveOxygenCost(target);
       this.positionValue = target;
-      this.consumeOxygen(RUN_CONFIG.moveOxygenCost);
+      this.consumeOxygen(oxygenCost);
       this.refreshDepth();
       this.refreshCoinsPreview();
       this.syncRun();
@@ -124,7 +130,8 @@ export class RunManager {
       return this.createResult('blocked', 'upwardDigForbidden', targetTile);
     }
 
-    if (!this.tileEffects.canApply(targetTile.type, this.requireRun())) {
+    const capacityPreview = this.tileEffects.resolve(targetTile.type, this.requireRun());
+    if (!this.canApplyTileEffect(capacityPreview)) {
       return this.createResult('blocked', 'backpackFull', targetTile);
     }
 
@@ -132,7 +139,7 @@ export class RunManager {
     const digResult = this.grid.dig(target, digDamage);
     this.consumeOxygen(TILE_CONFIG[targetTile.type].oxygenCost);
 
-    let collectedOre: TileType | undefined;
+    let collectedOre: OreType | undefined;
     let recoveredOxygen = 0;
     if (digResult.broken) {
       this.positionValue = target;
@@ -149,15 +156,26 @@ export class RunManager {
   }
 
   public returnToSurface(): RunActionResult {
-    return this.endRun('manualReturn');
+    return this.endRun('returnRope');
+  }
+
+  public sellAtSurface(): RunActionResult {
+    if (this.positionValue.y !== 0) {
+      return this.createResult('blocked', 'notAtSurface');
+    }
+
+    return this.endRun('surfaceSell');
   }
 
   public calculateCoins(run: RunState): number {
     const stats = this.requireStats();
-    const copperValue = run.inventory.copper * TILE_CONFIG.copper.oreValue;
-    const silverValue = run.inventory.silver * TILE_CONFIG.silver.oreValue;
-    return Math.floor((copperValue + silverValue) * stats.oreValueMultiplier) +
-      this.buffs.getDeepBonus(run, this.activeBuffsValue);
+    const oreValue = ORE_TYPES.reduce(
+      (sum, oreType) => sum + run.inventory[oreType] * TILE_CONFIG[oreType].oreValue,
+      0,
+    );
+    const depthBonus = Math.floor(run.depth / 20) * RUN_CONFIG.depthBonusPerTwentyMeters;
+    const multipliedValue = Math.floor((oreValue + depthBonus) * stats.oreValueMultiplier);
+    return multipliedValue + this.buffs.getDeepBonus(run, this.activeBuffsValue);
   }
 
   private consumeOxygen(amount: number): void {
@@ -166,19 +184,35 @@ export class RunManager {
     run.oxygen = Math.max(0, run.oxygen - actualCost);
   }
 
+  private getMoveOxygenCost(target: GridPosition): number {
+    // 0m 是安全区：玩家在地表左右移动不消耗氧气，进入地下后才开始消耗。
+    if (this.positionValue.y <= 0 && target.y <= 0) {
+      return 0;
+    }
+
+    return RUN_CONFIG.moveOxygenCost;
+  }
+
   private applyTileEffect(effect: ReturnType<TileEffectResolver['resolve']>): void {
     const run = this.requireRun();
-    // 只有 Manager 持有并修改可变 run；Resolver 返回的 delta 在这里一次性落地。
-    run.inventory.copper += effect.copperDelta;
-    run.inventory.silver += effect.silverDelta;
-    run.backpackUsed += effect.backpackUsedDelta;
+    // Resolver 只返回 delta，真正写入 RunState 的职责集中在 RunManager，避免状态被分散修改。
+    for (const oreType of ORE_TYPES) {
+      run.inventory[oreType] += effect.inventoryDelta[oreType] ?? 0;
+    }
+
+    run.backpackUsed = this.inventory.calculateUsage(run.inventory).usedSlots;
     run.oxygen = Math.min(run.maxOxygen, run.oxygen + effect.recoveredOxygen);
+  }
+
+  private canApplyTileEffect(effect: ReturnType<TileEffectResolver['resolve']>): boolean {
+    const run = this.requireRun();
+    return this.inventory.canApplyDelta(run.inventory, effect.inventoryDelta, run.backpackCapacity);
   }
 
   private finishAction(
     type: RunActionType,
     targetTile?: MineTile,
-    collectedOre?: TileType,
+    collectedOre?: OreType,
     recoveredOxygen = 0,
   ): RunActionResult {
     const run = this.requireRun();
@@ -199,7 +233,7 @@ export class RunManager {
   private endRun(
     endedReason: RunEndReason,
     targetTile?: MineTile,
-    collectedOre?: TileType,
+    collectedOre?: OreType,
     recoveredOxygen = 0,
   ): RunActionResult {
     const run = this.requireRun();
@@ -277,12 +311,4 @@ export class RunManager {
 
     return this.statsValue;
   }
-
-  private createEmptyInventory(): RunInventory {
-    return {
-      copper: 0,
-      silver: 0,
-    };
-  }
-
 }

@@ -1,4 +1,5 @@
-import { Button, Color, Graphics, Label, Node, UITransform, Vec3 } from 'cc';
+import { Button, Color, Graphics, Label, Node, resources, Sprite, SpriteFrame, UITransform, Vec3 } from 'cc';
+import { ScreenLayout, ScreenLayoutMetrics } from './ScreenLayout';
 
 export interface LabelOptions {
   text: string;
@@ -24,6 +25,30 @@ export interface RectOptions {
   parent?: Node;
 }
 
+export interface ImageOptions {
+  name: string;
+  path: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  parent?: Node;
+  color?: Color;
+}
+
+export interface ProgressBarOptions {
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  ratio: number;
+  fillColor: Color;
+  trackColor: Color;
+  strokeColor?: Color;
+  parent?: Node;
+}
+
 export interface ButtonOptions {
   text: string;
   x: number;
@@ -34,35 +59,52 @@ export interface ButtonOptions {
 }
 
 export class UiFactory {
+  private static readonly spriteCache = new Map<string, SpriteFrame>();
+  private contentRoot: Node | null = null;
+  private metrics: ScreenLayoutMetrics = ScreenLayout.getMetrics();
+
   public constructor(private readonly root: Node) {}
 
-  public ensureRoot(width = 720, height = 1280): void {
-    let transform = this.root.getComponent(UITransform);
-    if (!transform) {
-      transform = this.root.addComponent(UITransform);
+  public ensureRoot(): void {
+    ScreenLayout.configureDesignResolution();
+    this.metrics = ScreenLayout.applyRoot(this.root);
+    this.metrics = ScreenLayout.applyDesignRoot(this.getContentRoot());
+  }
+
+  public getLayoutMetrics(): ScreenLayoutMetrics {
+    return this.metrics;
+  }
+
+  private getContentRoot(): Node {
+    if (this.contentRoot?.isValid) {
+      return this.contentRoot;
     }
 
-    transform.setContentSize(width, height);
+    const root = new Node('DesignRoot');
+    root.setParent(this.root);
+    this.contentRoot = root;
+    return root;
   }
 
   public clear(): void {
-    this.root.removeAllChildren();
+    this.ensureRoot();
+    this.getContentRoot().removeAllChildren();
   }
 
-  public backdrop(width = 680, height = 900): Node {
+  public backdrop(width = 680, height = 900, fillColor: Color = new Color(0, 0, 0, 220)): Node {
     return this.rect({
       name: 'Backdrop',
       x: 0,
       y: 0,
       width,
       height,
-      fillColor: new Color(0, 0, 0, 220),
+      fillColor,
     });
   }
 
   public label(options: LabelOptions): Label {
     const node = new Node(options.name ?? 'Label');
-    node.setParent(options.parent ?? this.root);
+    node.setParent(options.parent ?? this.getContentRoot());
     node.setPosition(new Vec3(options.x, options.y, 0));
 
     const transform = node.addComponent(UITransform);
@@ -117,7 +159,7 @@ export class UiFactory {
 
   public rect(options: RectOptions): Node {
     const node = new Node(options.name);
-    node.setParent(options.parent ?? this.root);
+    node.setParent(options.parent ?? this.getContentRoot());
     node.setPosition(new Vec3(options.x, options.y, 0));
 
     const transform = node.addComponent(UITransform);
@@ -136,5 +178,70 @@ export class UiFactory {
     }
 
     return node;
+  }
+
+  public progressBar(options: ProgressBarOptions): Node {
+    const bar = this.rect({
+      name: options.name,
+      x: options.x,
+      y: options.y,
+      width: options.width,
+      height: options.height,
+      fillColor: options.trackColor,
+      strokeColor: options.strokeColor,
+      strokeWidth: options.strokeColor ? 1 : undefined,
+      parent: options.parent,
+    });
+    const fillWidth = Math.max(0, Math.min(1, options.ratio)) * options.width;
+    if (fillWidth <= 0) {
+      return bar;
+    }
+
+    this.rect({
+      name: `${options.name}Fill`,
+      x: -options.width / 2 + fillWidth / 2,
+      y: 0,
+      width: fillWidth,
+      height: options.height,
+      fillColor: options.fillColor,
+      parent: bar,
+    });
+    return bar;
+  }
+
+  public image(options: ImageOptions): Node {
+    const node = new Node(options.name);
+    node.setParent(options.parent ?? this.getContentRoot());
+    node.setPosition(new Vec3(options.x, options.y, 0));
+
+    const transform = node.addComponent(UITransform);
+    transform.setContentSize(options.width, options.height);
+
+    const sprite = node.addComponent(Sprite);
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+    sprite.color = options.color ?? Color.WHITE;
+
+    const cached = UiFactory.spriteCache.get(options.path);
+    if (cached) {
+      sprite.spriteFrame = cached;
+      return node;
+    }
+
+    this.loadSpriteFrame(options.path, sprite);
+    return node;
+  }
+
+  private loadSpriteFrame(path: string, sprite: Sprite): void {
+    resources.load(`${path}/spriteFrame`, SpriteFrame, (error, spriteFrame) => {
+      if (error || !spriteFrame) {
+        console.warn(`[UiFactory] 贴图加载失败：${path}`);
+        return;
+      }
+
+      UiFactory.spriteCache.set(path, spriteFrame);
+      if (sprite.node?.isValid) {
+        sprite.spriteFrame = spriteFrame;
+      }
+    });
   }
 }

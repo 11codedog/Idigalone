@@ -1,5 +1,10 @@
-import { GridPosition, TileType } from '../core/GameTypes';
-import { RUN_CONFIG, TILE_CONFIG } from '../config/GameConfig';
+import { GridPosition, OreType, TileType } from '../core/GameTypes';
+import {
+  getAvailableOreTypes,
+  getOreWeight,
+  RUN_CONFIG,
+  TILE_CONFIG,
+} from '../config/GameConfig';
 
 export interface MineTile {
   type: TileType;
@@ -15,6 +20,13 @@ export interface MineGenerationOptions {
   rareOreBonus: number;
 }
 
+interface OreVein {
+  oreType: OreType;
+  centerX: number;
+  radius: number;
+  richness: number;
+}
+
 type RandomSource = () => number;
 
 export class MineGrid {
@@ -24,6 +36,7 @@ export class MineGrid {
 
   private readonly random: RandomSource;
   private readonly tiles = new Map<string, MineTile>();
+  private readonly veinsByDepth = new Map<number, OreVein | null>();
   private generationOptions: MineGenerationOptions = {
     rareOreBonus: 0,
   };
@@ -43,11 +56,17 @@ export class MineGrid {
     return position.x >= 0 && position.x < this.width && position.y >= 0 && position.y <= this.generatedDepth;
   }
 
+  public reset(): void {
+    this.tiles.clear();
+    this.veinsByDepth.clear();
+  }
+
   public setGenerationOptions(options: Partial<MineGenerationOptions>): void {
     this.generationOptions = {
       ...this.generationOptions,
       ...options,
     };
+    this.reset();
   }
 
   public getTile(position: GridPosition): MineTile {
@@ -116,65 +135,97 @@ export class MineGrid {
       return this.createTile('empty');
     }
 
+    const veinOre = this.tryGenerateVeinOre(position);
+    if (veinOre) {
+      return this.createTile(veinOre);
+    }
+
     const depth = position.y;
-    const stoneChance = Math.min(0.35, 0.08 + depth * 0.003);
     const oxygenChance = depth >= RUN_CONFIG.oxygenPackMinDepth ? RUN_CONFIG.oxygenPackChance : 0;
-    const silverChance =
-      depth < 8
-        ? 0
-        : Math.min(0.35, 0.04 + depth * 0.002 + this.generationOptions.rareOreBonus);
-    const copperChance = Math.min(0.32, 0.18 + depth * 0.001);
-    const chances = this.normalizeChances({
-      silver: silverChance,
-      copper: copperChance,
-      oxygen: oxygenChance,
-      stone: stoneChance,
-    });
+    const backgroundOreChance = Math.min(
+      0.22,
+      RUN_CONFIG.backgroundOreChance + depth * 0.0008 + this.generationOptions.rareOreBonus * 0.4,
+    );
+    const stoneChance = Math.min(0.42, 0.08 + depth * 0.0025);
     const roll = this.random();
 
-    if (roll < chances.silver) {
-      return this.createTile('silver');
+    if (roll < backgroundOreChance) {
+      return this.createTile(this.pickOreType(depth));
     }
 
-    if (roll < chances.silver + chances.copper) {
-      return this.createTile('copper');
-    }
-
-    if (roll < chances.silver + chances.copper + chances.oxygen) {
+    if (roll < backgroundOreChance + oxygenChance) {
       return this.createTile('oxygen');
     }
 
-    if (roll < chances.silver + chances.copper + chances.oxygen + chances.stone) {
+    if (roll < backgroundOreChance + oxygenChance + stoneChance) {
       return this.createTile('stone');
     }
 
     return this.createTile('dirt');
   }
 
+  private tryGenerateVeinOre(position: GridPosition): OreType | null {
+    const vein = this.getVein(position.y);
+    if (!vein) {
+      return null;
+    }
+
+    const distance = Math.abs(position.x - vein.centerX);
+    if (distance > vein.radius) {
+      return null;
+    }
+
+    const distancePenalty = distance / (vein.radius + 1);
+    const chance = Math.max(0.12, vein.richness * (1 - distancePenalty));
+    return this.random() < chance ? vein.oreType : null;
+  }
+
+  private getVein(depth: number): OreVein | null {
+    if (this.veinsByDepth.has(depth)) {
+      return this.veinsByDepth.get(depth) ?? null;
+    }
+
+    const chance = Math.min(
+      0.58,
+      RUN_CONFIG.veinBaseChance + depth * RUN_CONFIG.veinDepthChanceGrowth + this.generationOptions.rareOreBonus,
+    );
+    if (this.random() > chance) {
+      this.veinsByDepth.set(depth, null);
+      return null;
+    }
+
+    const vein: OreVein = {
+      oreType: this.pickOreType(depth),
+      centerX: Math.floor(this.random() * this.width),
+      radius: depth >= 60 ? 2 : 1,
+      richness: Math.min(0.82, 0.48 + depth * 0.002),
+    };
+    this.veinsByDepth.set(depth, vein);
+    return vein;
+  }
+
+  private pickOreType(depth: number): OreType {
+    const availableOres = getAvailableOreTypes(depth);
+    if (availableOres.length === 0) {
+      return 'copper';
+    }
+
+    const totalWeight = availableOres.reduce((sum, oreType) => sum + getOreWeight(oreType, depth), 0);
+    let roll = this.random() * totalWeight;
+    for (const oreType of availableOres) {
+      roll -= getOreWeight(oreType, depth);
+      if (roll <= 0) {
+        return oreType;
+      }
+    }
+
+    return availableOres[availableOres.length - 1];
+  }
+
   private createTile(type: TileType): MineTile {
     return {
       type,
       hardnessRemaining: TILE_CONFIG[type].hardness,
-    };
-  }
-
-  private normalizeChances(chances: {
-    silver: number;
-    copper: number;
-    oxygen: number;
-    stone: number;
-  }): { silver: number; copper: number; oxygen: number; stone: number } {
-    // 深度和增益叠加后概率可能超过 1；归一化保证泥土/石头分布不会被静默挤压。
-    const total = chances.silver + chances.copper + chances.oxygen + chances.stone;
-    if (total <= 1) {
-      return chances;
-    }
-
-    return {
-      silver: chances.silver / total,
-      copper: chances.copper / total,
-      oxygen: chances.oxygen / total,
-      stone: chances.stone / total,
     };
   }
 

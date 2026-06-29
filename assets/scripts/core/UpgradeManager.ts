@@ -9,7 +9,8 @@ export interface UpgradeResult {
   cost: number;
   nextLevel: number;
   save: SaveData;
-  reason?: 'notEnoughCoins' | 'maxLevel';
+  reason?: 'notEnoughCoins' | 'maxLevel' | 'saveFailed';
+  error?: string;
 }
 
 export class UpgradeManager {
@@ -58,7 +59,18 @@ export class UpgradeManager {
         [upgradeId]: currentLevel + 1,
       },
     };
-    await this.saves.save(nextSave);
+    const saveResult = await this.saves.save(nextSave);
+    if (!saveResult.ok) {
+      return {
+        ok: false,
+        upgradeId,
+        cost,
+        nextLevel: currentLevel + 1,
+        save: saveResult.data ?? nextSave,
+        reason: 'saveFailed',
+        error: saveResult.error,
+      };
+    }
 
     return {
       ok: true,
@@ -71,4 +83,3 @@ export class UpgradeManager {
 }
 
 export const upgradeManager = new UpgradeManager();
-
