@@ -60,6 +60,7 @@ export interface ButtonOptions {
 
 export class UiFactory {
   private static readonly spriteCache = new Map<string, SpriteFrame>();
+  private static readonly pendingSpriteLoads = new Map<string, Sprite[]>();
   private contentRoot: Node | null = null;
   private metrics: ScreenLayoutMetrics = ScreenLayout.getMetrics();
 
@@ -73,17 +74,6 @@ export class UiFactory {
 
   public getLayoutMetrics(): ScreenLayoutMetrics {
     return this.metrics;
-  }
-
-  private getContentRoot(): Node {
-    if (this.contentRoot?.isValid) {
-      return this.contentRoot;
-    }
-
-    const root = new Node('DesignRoot');
-    root.setParent(this.root);
-    this.contentRoot = root;
-    return root;
   }
 
   public clear(): void {
@@ -231,16 +221,39 @@ export class UiFactory {
     return node;
   }
 
+  private getContentRoot(): Node {
+    if (this.contentRoot?.isValid) {
+      return this.contentRoot;
+    }
+
+    const root = new Node('DesignRoot');
+    root.setParent(this.root);
+    this.contentRoot = root;
+    return root;
+  }
+
   private loadSpriteFrame(path: string, sprite: Sprite): void {
+    const pendingSprites = UiFactory.pendingSpriteLoads.get(path);
+    if (pendingSprites) {
+      pendingSprites.push(sprite);
+      return;
+    }
+
+    UiFactory.pendingSpriteLoads.set(path, [sprite]);
     resources.load(`${path}/spriteFrame`, SpriteFrame, (error, spriteFrame) => {
+      const waitingSprites = UiFactory.pendingSpriteLoads.get(path) ?? [];
+      UiFactory.pendingSpriteLoads.delete(path);
+
       if (error || !spriteFrame) {
         console.warn(`[UiFactory] 贴图加载失败：${path}`);
         return;
       }
 
       UiFactory.spriteCache.set(path, spriteFrame);
-      if (sprite.node?.isValid) {
-        sprite.spriteFrame = spriteFrame;
+      for (const waitingSprite of waitingSprites) {
+        if (waitingSprite.node?.isValid) {
+          waitingSprite.spriteFrame = spriteFrame;
+        }
       }
     });
   }

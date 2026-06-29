@@ -8,10 +8,11 @@ assets/
   scripts/
     core/
     gameplay/
+    skill/
     ui/
+      screens/
     platform/
     config/
-    skill/
   prefabs/
   resources/
   bundles/
@@ -26,7 +27,8 @@ docs/
 | `core` | 游戏生命周期、一局状态、事件、存档、升级和核心类型 |
 | `gameplay` | 一局流程、矿洞地图、挖掘、氧气、矿块效果和局内增益 |
 | `skill` | 长期技能规则、技能 modifiers、背包占用等规则计算 |
-| `ui` | 首页、HUD、暂停、结算、升级、增益选择和动态 UI 节点 |
+| `ui` | Cocos UI 组合、动态节点创建、HUD、页面路由和页面展示 |
+| `ui/screens` | 首页、增益选择、运行中、暂停、结算、升级、技能等独立页面 |
 | `platform` | 平台抽象、Mock、抖音实现、存储、分享、广告、震动 |
 | `config` | 矿石、矿块硬度、升级、增益、经济、深度和技能参数 |
 
@@ -43,6 +45,7 @@ platform <- business code
 ```
 
 规则：
+
 - `gameplay` 可以调用 `skill` 的计算结果，但不能把某个技能特例写进流程。
 - `skill` 不依赖 `ui` 或 Cocos `cc` 类型。
 - `ui` 只展示技能效果结果，不参与技能规则计算。
@@ -69,7 +72,7 @@ platform <- business code
   -> RunManager 使用 InventoryCalculator 判断背包容量
   -> RunManager 写入 inventory
   -> InventoryCalculator 重新计算 backpackUsed
-  -> HUD / 结算页展示结果
+  -> HUD / 技能页 / 结算页展示结果
 ```
 
 第一版默认启用 `矿石压缩`，不进入存档，也不做技能选择 UI。
@@ -77,12 +80,15 @@ platform <- business code
 ## UI 拆分约定
 
 - `MiningDebugPanel` 只负责原型页面状态、玩家操作入口和玩法/存档/平台模块调度。
-- `MiningScreenView` 负责首页、增益选择、运行中、暂停、结算、升级等页面组合。
+- `MiningScreenTypes` 定义页面状态、页面模型、页面动作和结算快照类型。
+- `MiningScreenView` 只负责清屏、背景、页面路由和日志渲染。
+- `ui/screens/*ScreenView` 各自负责一个页面，不处理跨页面流程。
+- `RunningScreenView` 组合 `RunHudView`、`MineGridView`、`RunFooterView`，并使用 `RunScreenLayout` 计算移动端布局。
 - `RunHudView` 负责顶部 HUD。
 - `RunFooterView` 负责底部操作提示、暂停、地表出售。
 - `MineGridView` 只负责矿洞网格可视化，不处理挖掘、结算或存档。
 - `RunTextPresenter` 负责提示、阻挡原因、结束原因和矿块名称文案。
-- `UiFactory` 负责用代码创建基础 UI 节点。
+- `UiFactory` 负责用代码创建基础 UI 节点和资源加载。
 
 ## 配置原则
 

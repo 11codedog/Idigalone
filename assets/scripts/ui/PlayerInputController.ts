@@ -1,4 +1,4 @@
-import { EventKeyboard, EventTouch, input, Input, sys } from 'cc';
+import { EventKeyboard, EventTouch, input, Input } from 'cc';
 import { MoveDirection } from '../gameplay/RunManager';
 import { KeyboardMoveController } from './KeyboardMoveController';
 import { SwipeMoveController } from './SwipeMoveController';
@@ -20,14 +20,10 @@ export class PlayerInputController {
   }
 
   public enable(): void {
-    if (this.isMobileInput()) {
-      input.on(Input.EventType.TOUCH_START, this.handleTouchStart, this);
-      input.on(Input.EventType.TOUCH_END, this.handleTouchEnd, this);
-      return;
-    }
-
     input.on(Input.EventType.KEY_DOWN, this.handleKeyDown, this);
     input.on(Input.EventType.KEY_UP, this.handleKeyUp, this);
+    input.on(Input.EventType.TOUCH_START, this.handleTouchStart, this);
+    input.on(Input.EventType.TOUCH_END, this.handleTouchEnd, this);
   }
 
   public disable(): void {
@@ -40,13 +36,11 @@ export class PlayerInputController {
   }
 
   public update(deltaTime: number): void {
-    if (!this.isMobileInput()) {
-      this.keyboard.update(deltaTime);
-    }
+    this.keyboard.update(deltaTime);
   }
 
   public getHint(): string {
-    return this.isMobileInput() ? '滑动移动与挖掘' : 'WASD / 方向键移动与挖掘，可长按';
+    return 'WASD / 方向键 / 滑动移动与挖掘，可长按';
   }
 
   private handleKeyDown(event: EventKeyboard): void {
@@ -63,9 +57,5 @@ export class PlayerInputController {
 
   private handleTouchEnd(event: EventTouch): void {
     this.swipe.handleTouchEnd(event);
-  }
-
-  private isMobileInput(): boolean {
-    return sys.isMobile;
   }
 }

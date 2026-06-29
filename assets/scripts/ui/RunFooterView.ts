@@ -1,7 +1,8 @@
 import { Color } from 'cc';
 import { RunState } from '../core/GameTypes';
+import { RUN_CONFIG } from '../config/GameConfig';
 import { RunManager } from '../gameplay/RunManager';
-import type { MiningScreenActions } from './MiningScreenView';
+import type { MiningScreenActions } from './MiningScreenTypes';
 import { RunFooterLayout } from './RunScreenLayout';
 import { UiFactory } from './UiFactory';
 
@@ -24,7 +25,7 @@ export class RunFooterView {
       height: 52,
     });
 
-    if (runManager.position.y === 0 && run.depth > 0) {
+    if (runManager.position.y === RUN_CONFIG.surfaceDepth && run.depth > RUN_CONFIG.surfaceDepth) {
       this.renderSurfaceSell(actions, layout);
       return;
     }

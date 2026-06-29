@@ -22,18 +22,21 @@ export class MineGridView {
   ): void {
     const player = runManager.position;
     const startY = Math.max(0, player.y - 3);
-    const gridWidth = runManager.grid.width;
-    const startX = -((gridWidth - 1) * (layout.cellSize + layout.gap)) / 2;
+    const visibleColumns = runManager.grid.width;
+    const centerColumn = Math.floor(visibleColumns / 2);
+    const startWorldX = player.x - centerColumn;
+    const startScreenX = -((visibleColumns - 1) * (layout.cellSize + layout.gap)) / 2;
 
     for (let row = 0; row < this.visibleRows; row += 1) {
       const y = startY + row;
       const screenY = layout.startScreenY - row * (layout.cellSize + layout.gap);
 
-      for (let x = 0; x < gridWidth; x += 1) {
+      for (let column = 0; column < visibleColumns; column += 1) {
+        const x = startWorldX + column;
         const isPlayer = player.x === x && player.y === y;
         const isRecentAction = Boolean(lastActionPosition?.x === x && lastActionPosition.y === y);
         const tileType = runManager.grid.getTile({ x, y }).type;
-        const screenX = startX + x * (layout.cellSize + layout.gap);
+        const screenX = startScreenX + column * (layout.cellSize + layout.gap);
         this.createTileCell(tileType, isPlayer, isRecentAction, screenX, screenY, layout.cellSize);
       }
     }

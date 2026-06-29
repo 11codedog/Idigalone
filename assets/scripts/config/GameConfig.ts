@@ -253,6 +253,7 @@ export const BASE_PLAYER_STATS = {
 };
 
 export const RUN_CONFIG = {
+  surfaceDepth: 0,
   gridWidth: 9,
   generatedDepth: 220,
   moveOxygenCost: 1,

@@ -1,19 +1,19 @@
 import { Color } from 'cc';
 import { RunState, TileType } from '../core/GameTypes';
-import { TILE_CONFIG } from '../config/GameConfig';
+import { RUN_CONFIG, TILE_CONFIG } from '../config/GameConfig';
 import { RunBlockReason, RunEndReason } from '../gameplay/RunManager';
 
 export class RunTextPresenter {
   public warningText(run: RunState): string {
     if (this.isOxygenLow(run)) {
-      return '氧气紧张，考虑回到地表出售，或用返回绳结算。';
+      return '氧气紧张，考虑回到地表出售，或暂停后返回结算。';
     }
 
     if (this.isBackpackFull(run)) {
       return '背包已满，回到地表出售后升级背包。';
     }
 
-    return '向上只能走已经挖空的路，不能向上挖。';
+    return '向上只能走已经挖空的路，不能向上挖。左右没有地图边界。';
   }
 
   public warningColor(run: RunState): Color {
@@ -48,11 +48,11 @@ export class RunTextPresenter {
     }
 
     if (reason === 'outOfBounds') {
-      return '已经到边界';
+      return '已到达当前矿洞深度边界';
     }
 
     if (reason === 'notAtSurface') {
-      return '需要先回到 0m 地表';
+      return `需要先回到 ${RUN_CONFIG.surfaceDepth}m 地表`;
     }
 
     return '未知原因';
@@ -63,8 +63,8 @@ export class RunTextPresenter {
       return '氧气耗尽';
     }
 
-    if (reason === 'returnRope') {
-      return '返回绳结算';
+    if (reason === 'manualSettlement') {
+      return '返回结算';
     }
 
     if (reason === 'surfaceSell') {

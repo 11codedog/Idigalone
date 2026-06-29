@@ -10,7 +10,37 @@ const { InventoryCalculator } = require('../assets/scripts/skill/InventoryCalcul
 const { PlatformManager } = require('../assets/scripts/platform/PlatformManager');
 const { MockPlatform } = require('../assets/scripts/platform/MockPlatform');
 
-test('矿石压缩按同类 5 个一组计算背包占用', () => {
+test('MineGrid allows horizontal expansion while keeping vertical bounds', () => {
+  const grid = new MineGrid(9, 20, () => 0.5);
+
+  assert.strictEqual(grid.centerX, 0);
+  assert.strictEqual(grid.isInBounds({ x: -1000, y: 1 }), true);
+  assert.strictEqual(grid.isInBounds({ x: 1000, y: 1 }), true);
+  assert.strictEqual(grid.isInBounds({ x: 0, y: -1 }), false);
+  assert.strictEqual(grid.isInBounds({ x: 0, y: 21 }), false);
+
+  grid.setTile({ x: -12, y: 1 }, 'copper');
+  assert.strictEqual(grid.getTile({ x: -12, y: 1 }).type, 'copper');
+});
+
+test('MineGrid coordinate generation is independent from query order', () => {
+  const positions = [
+    { x: -8, y: 5 },
+    { x: 0, y: 12 },
+    { x: 13, y: 24 },
+    { x: -21, y: 37 },
+  ];
+  const firstGrid = new MineGrid(9, 80, () => 0.25);
+  const secondGrid = new MineGrid(9, 80, () => 0.25);
+
+  const firstTypes = positions.map((position) => firstGrid.getTile(position).type);
+  positions.slice().reverse().forEach((position) => secondGrid.getTile(position));
+  const secondTypes = positions.map((position) => secondGrid.getTile(position).type);
+
+  assert.deepStrictEqual(secondTypes, firstTypes);
+});
+
+test('InventoryCalculator compresses same ore into stacks of five', () => {
   const inventory = createEmptyInventory();
   inventory.copper = 6;
   inventory.silver = 5;
@@ -23,7 +53,7 @@ test('矿石压缩按同类 5 个一组计算背包占用', () => {
   assert.strictEqual(usage.savedSlots, 8);
 });
 
-test('RunManager 采集同类矿石后使用压缩后的背包占用', () => {
+test('RunManager uses compressed backpack usage after collecting same ore', () => {
   const state = new GameState();
   const grid = new MineGrid();
   const runManager = new RunManager(state, grid);
@@ -49,7 +79,7 @@ test('RunManager 采集同类矿石后使用压缩后的背包占用', () => {
   assert.strictEqual(result.run.backpackUsed, 2);
 });
 
-test('SaveManager 在平台写入失败时返回失败并保留当前状态', async () => {
+test('SaveManager returns failure and keeps current state when platform write fails', async () => {
   const state = new GameState();
   const saves = new SaveManager(state);
   PlatformManager.use({

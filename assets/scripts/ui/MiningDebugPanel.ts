@@ -1,18 +1,18 @@
 import { _decorator, Component } from 'cc';
 import { BuffId, UpgradeId } from '../core/GameTypes';
 import { gameState } from '../core/GameState';
-import { BUFF_CONFIG, UPGRADE_CONFIG } from '../config/GameConfig';
+import { BUFF_CONFIG, RUN_CONFIG, UPGRADE_CONFIG } from '../config/GameConfig';
 import { saveManager } from '../core/SaveManager';
 import { upgradeManager } from '../core/UpgradeManager';
 import { buffManager } from '../gameplay/BuffManager';
 import { MoveDirection, RunActionResult, RunManager } from '../gameplay/RunManager';
 import { PlatformManager } from '../platform/PlatformManager';
-import {
+import { MiningScreenView } from './MiningScreenView';
+import type {
   MiningScreenActions,
   MiningScreenState,
-  MiningScreenView,
   SettlementSnapshot,
-} from './MiningScreenView';
+} from './MiningScreenTypes';
 import { PlayerInputController } from './PlayerInputController';
 import { RunTextPresenter } from './RunTextPresenter';
 import { UiFactory } from './UiFactory';
@@ -82,6 +82,7 @@ export class MiningDebugPanel extends Component {
       showHome: () => this.showHome(),
       showBuffSelect: () => this.showBuffSelect(),
       showUpgrade: () => this.showUpgrade(),
+      showSkills: () => this.showSkills(),
       showPause: () => this.showPause(),
       startRun: (buffId: BuffId) => this.startRun(buffId),
       move: (direction: MoveDirection) => this.move(direction),
@@ -117,6 +118,12 @@ export class MiningDebugPanel extends Component {
 
   private showUpgrade(): void {
     this.screen = 'upgrade';
+    this.render();
+  }
+
+  private showSkills(): void {
+    this.screen = 'skills';
+    this.lastLog = '查看当前已启用技能。';
     this.render();
   }
 
@@ -156,7 +163,7 @@ export class MiningDebugPanel extends Component {
 
   private async returnToSurface(): Promise<void> {
     if (!this.runManager?.run) {
-      this.lastLog = '还没有可以使用返回绳的下矿局。';
+      this.lastLog = '还没有可以结算的下矿局。';
       this.render();
       return;
     }
@@ -211,7 +218,7 @@ export class MiningDebugPanel extends Component {
 
   private canSellAtSurface(): boolean {
     const run = this.runManager?.run;
-    return Boolean(run && this.runManager?.position.y === 0 && run.depth > 0);
+    return Boolean(run && this.runManager?.position.y === RUN_CONFIG.surfaceDepth && run.depth > RUN_CONFIG.surfaceDepth);
   }
 
   private async buyUpgrade(upgradeId: UpgradeId): Promise<void> {

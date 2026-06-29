@@ -17,7 +17,7 @@ import { inventoryCalculator, InventoryCalculator } from '../skill/InventoryCalc
 
 export type MoveDirection = 'up' | 'down' | 'left' | 'right';
 
-export type RunEndReason = 'oxygenDepleted' | 'returnRope' | 'surfaceSell';
+export type RunEndReason = 'oxygenDepleted' | 'manualSettlement' | 'surfaceSell';
 
 export type RunActionType = 'move' | 'dig' | 'blocked' | 'ended';
 
@@ -156,11 +156,11 @@ export class RunManager {
   }
 
   public returnToSurface(): RunActionResult {
-    return this.endRun('returnRope');
+    return this.endRun('manualSettlement');
   }
 
   public sellAtSurface(): RunActionResult {
-    if (this.positionValue.y !== 0) {
+    if (this.positionValue.y !== RUN_CONFIG.surfaceDepth) {
       return this.createResult('blocked', 'notAtSurface');
     }
 
@@ -185,8 +185,8 @@ export class RunManager {
   }
 
   private getMoveOxygenCost(target: GridPosition): number {
-    // 0m 是安全区：玩家在地表左右移动不消耗氧气，进入地下后才开始消耗。
-    if (this.positionValue.y <= 0 && target.y <= 0) {
+    // 地表是安全区：玩家在地表左右移动不消耗氧气，进入地下后才开始消耗。
+    if (this.positionValue.y <= RUN_CONFIG.surfaceDepth && target.y <= RUN_CONFIG.surfaceDepth) {
       return 0;
     }
 

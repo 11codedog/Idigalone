@@ -1,94 +1,66 @@
 # 代码审查行动计划
 
-## 结论
+## 当前结论
 
-DeepSeek 的评价大方向成立：当前代码作为原型/MVP 质量较好，主要风险不在架构分层，而在测试、性能、品质门禁和平台错误可见性。  
-本轮不做大规模重构，先补“提审和长期迭代会立即受益”的基础设施。
+DeepSeek V4 Flash 的审查里，随机生成、输入适配、布局、资源加载去重和文案一致性这些问题值得处理。  
+本轮已修确定正确且低风险的项；不强行补不存在的新矿贴图，避免把“纯色占位”改成“加载失败”。
 
-## 逐条判断
+## DeepSeek V4 Flash 逐条处理
 
-| 反馈 | 判断 | 本轮处理 |
-|---|---|---|
-| 没有测试 | 正确，且是最大短板 | 已新增轻量测试 runner 和 3 条核心测试 |
-| 渲染层频繁创建对象 | 正确，尤其是网格热路径 | 已提取 Tile 颜色常量；节点池/DrawCall 合并暂缓 |
-| 单 Component 路由仍是瓶颈 | 正确，但不是当前最紧急 | 暂缓，列入下一阶段重构 |
-| 缺少构建期品质门禁 | 正确 | 已新增 `npm test`；ESLint/pre-commit/包体报警暂缓 |
-| 平台错误处理还不够 | 正确 | 已让 `SaveManager.save()` 返回写入结果，并在 UI 日志显示保存失败 |
+| 优先级 | 反馈 | 判断 | 本轮处理 |
+|---|---|---|---|
+| P0 | `MineGrid.generateTile()` 矿脉判定顺序破坏随机序列 | 当前代码已先判定矿脉，再判定背景矿/氧气/石头 | 不改逻辑，记录为当前已满足 |
+| P0 | 深层 `richness` 170m 后封顶 | 成立 | 改为 `0.48 + depth / generatedDepth * 0.34` |
+| P0 | “返回绳”文案与逻辑不一致 | 成立 | 改为“返回结算”，内部原因改为 `manualSettlement` |
+| P1 | PC 触摸屏只能触发一种输入 | 成立 | 键盘和触摸事件同时注册 |
+| P1 | 横屏 footer 与 HUD 坐标可能重叠 | 成立 | footer 改为基于屏幕底部计算 |
+| P1 | 新矿石没有贴图 | 部分成立；当前资源确实不存在 | 保持纯色占位，后续补资源时再加路径 |
+| P1 | 同一路径贴图会并发重复加载 | 成立 | `UiFactory` 增加 pending 队列去重 |
+| P2 | 技能 modifiers 暂不支持分矿石类型 | 成立，但不是当前需求 | 暂缓，等出现“只对某矿生效”的技能再扩展 |
+| P2 | `0m` 硬编码 | 成立 | 新增 `RUN_CONFIG.surfaceDepth` 并替换主要逻辑判断 |
+| P2 | 图例颜色描述偏差 | 成立 | 图例改为与 `UiColors.ts` 一致 |
 
-## 本轮已落地
+## 本轮额外整理
 
-| 能力 | 文件 | 说明 |
-|---|---|---|
-| 核心测试入口 | `tools/run-tests.js` | 无新增 npm 依赖，用现有 TypeScript 编译器运行逻辑测试 |
-| 测试脚本 | `package.json` | 新增 `npm test` |
-| 核心测试用例 | `tests/core-gameplay.test.js` | 覆盖矿石压缩、RunManager 采集路径、存档写失败语义 |
-| 存档失败返回 | `SaveManager.ts` | `save()` 返回 `PlatformResult<SaveData>`，失败不静默吞掉 |
-| 升级失败透传 | `UpgradeManager.ts` | 保存失败时返回 `saveFailed` |
-| 用户可见提示 | `MiningDebugPanel.ts` | 结算/升级存档失败会显示日志 |
-| 颜色常量缓存 | `UiColors.ts`、`MineGridView.ts` | 降低矿洞网格每次 render 的 `Color` 分配 |
+| 文件 | 说明 |
+|---|---|
+| `GameConfig.ts` | 恢复中文显示名，新增 `surfaceDepth` |
+| `GDD.md` | 同步“暂停菜单返回结算，不消耗道具”的实际规则 |
+| `MiningScreenView.ts` | 恢复中文 UI 文案，修正图例 |
+| `RunFooterView.ts` | 恢复中文文案，使用 `RUN_CONFIG.surfaceDepth` |
 
-## 新增测试覆盖
+## 仍然暂缓
 
-```text
-npm test
-```
+### 新矿物贴图
 
-当前测试：
-- 同类矿石 5 个压缩成 1 组。
-- `RunManager.move()` 采集 6 个铜矿后背包占用为 2。
-- 平台写存档失败时，`SaveManager.save()` 返回失败，且不把传入的新存档写进 `GameState`。
-
-后续优先补充：
-- 氧气耗尽结算。
-- 地表 0m 左右移动不耗氧。
-- 向上只能走空路，不能向上挖。
-- `BuffManager` 多增益叠加。
-- `MineGrid` 深度矿物池边界。
-
-## 暂缓项
-
-### 节点池
-
-当前 `UiFactory.clear()` 仍会清空并重建节点。这个问题真实存在，但节点池要配合 View 生命周期一起做，否则容易出现旧事件监听、旧节点状态残留。建议和屏幕路由拆分一起处理。
-
-### DrawCall 合并
-
-矿洞网格目前仍是独立 Graphics。正式优化方向是把 Tile 网格改成单个绘制器或合批 Sprite，但这会影响资源策略和交互高亮，先不在本轮做。
-
-### 屏幕路由
-
-`MiningDebugPanel` 仍是页面状态调度中心。下一步可以拆：
+铁矿、金矿、水晶、黑曜矿还没有对应资源。当前用颜色块是明确的占位策略。后续补贴图时再更新：
 
 ```text
-ui/screens/
-  HomeScreen.ts
-  BuffSelectScreen.ts
-  RunningScreen.ts
-  PauseScreen.ts
-  SettlementScreen.ts
-  UpgradeScreen.ts
+assets/resources/art/sprites/ore_iron.png
+assets/resources/art/sprites/ore_gold.png
+assets/resources/art/sprites/ore_crystal.png
+assets/resources/art/sprites/ore_obsidian.png
 ```
 
-目标是让 `MiningDebugPanel` 只保留当前 screen、共享 model 和 screen 切换。
+### 分矿石类型技能 modifier
 
-### ESLint / pre-commit / 包体报警
+当前只有“矿石压缩”，全矿石统一 5 个一组。等出现“只对铜矿生效”或“稀有矿不同压缩规则”时，再把 `SkillModifiers` 从全局数值扩展成按矿物类型配置。
 
-这些都合理，但会引入工具链和配置。等测试入口稳定后再加，避免一次性改变太多开发流程。
+### 节点池和 DrawCall 合并
 
-## 后续优先级
+这两项仍然正确，但需要和 UI 生命周期、屏幕路由一起做。现在只做了贴图请求去重和颜色常量缓存。
 
-| 优先级 | 事项 | 验收 |
-|---|---|---|
-| P0 | 补齐 gameplay/core 10 条左右单元测试 | `npm test` 覆盖主要失败路径 |
-| P0 | UiFactory 图片加载失败重试 | 弱网或首次失败后能重新尝试 |
-| P1 | 屏幕路由拆分 | 新增屏幕不再修改 `MiningDebugPanel` 主体 |
-| P1 | 节点池或局部刷新 | 玩家移动时不重建整棵 UI 树 |
-| P1 | 构建后包体检查脚本 | 主包超过 4MB 时报警 |
-| P2 | DrawCall 合并 | 矿洞网格渲染成本下降 |
-| P2 | 平台错误上报 | 真机问题能定位到错误类型 |
+## 验证要求
 
-## 新规则
+修改 `core/`、`gameplay/`、`skill/`、输入、布局或资源加载后，必须运行：
 
-- 修改 `core/`、`gameplay/`、`skill/` 后必须跑 `npm test` 和 `npm run typecheck`。
-- 修改存档、平台、结算时，必须检查失败结果是否能被 UI 或日志观察到。
-- 性能优化先处理高频热路径，再做结构性重构。
+```powershell
+npm.cmd test
+npm.cmd run typecheck
+```
+
+涉及平台隔离时额外检查：
+
+```powershell
+rg -n "tt\." assets/scripts
+```

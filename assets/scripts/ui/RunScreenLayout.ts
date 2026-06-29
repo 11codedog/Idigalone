@@ -65,6 +65,7 @@ function createSharedLayout(metrics: ScreenLayoutMetrics): RunScreenLayout {
   const cellSize = clamp(Math.min(maxCellByHeight, maxCellByWidth), isLandscape ? 28 : 42, isLandscape ? 72 : 90);
   const gridTotalHeight = cellSize * 10 + gap * 9;
   const hudHeight = Math.max(96, topUiHeight - topMargin - 6);
+  const footerY = screenBottom + (isLandscape ? 70 : 88);
 
   return {
     isLandscape,
@@ -89,11 +90,11 @@ function createSharedLayout(metrics: ScreenLayoutMetrics): RunScreenLayout {
       startScreenY: gridTop - (gridHeight - gridTotalHeight) / 2 - cellSize / 2,
     },
     footer: {
-      y: uiTop - (isLandscape ? 58 : 72),
+      y: footerY,
       pauseX: contentWidth / 2 - 80,
       hintX: contentWidth / 2 - (isLandscape ? 270 : 300),
       hintWidth: isLandscape ? 300 : 340,
-      surfaceTextY: uiBottom + (isLandscape ? 8 : 14),
+      surfaceTextY: footerY + (isLandscape ? 46 : 52),
       surfaceTextX: 90,
       surfaceTextWidth: contentWidth - 260,
       sellButtonX: contentWidth / 2 - 250,
