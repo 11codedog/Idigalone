@@ -1,5 +1,5 @@
 import type { BuffId, GridPosition, RunState, SaveData, UpgradeId } from '../core/GameTypes';
-import type { MoveDirection, RunManager } from '../gameplay/RunManager';
+import type { CoinBreakdown, MoveDirection, RunManager } from '../gameplay/RunManager';
 
 export type MiningScreenState =
   | 'loading'
@@ -14,6 +14,8 @@ export type MiningScreenState =
 export interface SettlementSnapshot {
   run: RunState;
   earnedCoins: number;
+  coinBreakdown: CoinBreakdown;
+  inventorySavedSlots: number;
   reason: string;
 }
 

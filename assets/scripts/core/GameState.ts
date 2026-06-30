@@ -72,6 +72,11 @@ export class GameState {
     this.events.emit('saveChanged', { save: this.save });
     this.setPhase('settlement');
   }
+
+  public abandonRun(nextPhase: GamePhase = 'home'): void {
+    this.runValue = null;
+    this.setPhase(nextPhase);
+  }
 }
 
 export const gameState = new GameState();

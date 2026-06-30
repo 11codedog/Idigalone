@@ -95,12 +95,19 @@ export class MiningDebugPanel extends Component {
   }
 
   private async initializeData(): Promise<void> {
-    const save = await saveManager.load();
-    this.lastLog = `存档已读取：金币 ${save.coins}`;
+    const loadResult = await saveManager.load();
+    const save = loadResult.data ?? gameState.save;
+    this.lastLog = loadResult.ok
+      ? `存档已读取：金币 ${save.coins}`
+      : `存档读取失败，使用临时进度：${loadResult.error ?? '未知错误'}`;
     this.showHome();
   }
 
   private showHome(): void {
+    if (!this.runManager?.run) {
+      gameState.setPhase('home');
+    }
+
     this.screen = 'home';
     this.runManager = null;
     this.pendingBuffChoices = [];
@@ -110,6 +117,7 @@ export class MiningDebugPanel extends Component {
   }
 
   private showBuffSelect(): void {
+    gameState.setPhase('home');
     this.screen = 'buffSelect';
     this.pendingBuffChoices = buffManager.chooseRandomBuffs(3);
     this.lastLog = '选择一个本局增益后开始下矿。';
@@ -117,11 +125,13 @@ export class MiningDebugPanel extends Component {
   }
 
   private showUpgrade(): void {
+    gameState.setPhase('home');
     this.screen = 'upgrade';
     this.render();
   }
 
   private showSkills(): void {
+    gameState.setPhase('home');
     this.screen = 'skills';
     this.lastLog = '查看当前已启用技能。';
     this.render();
@@ -134,6 +144,7 @@ export class MiningDebugPanel extends Component {
     }
 
     this.screen = 'pause';
+    gameState.setPhase('paused');
     this.lastLog = '下矿已暂停。';
     this.render();
   }
@@ -195,6 +206,8 @@ export class MiningDebugPanel extends Component {
       this.lastSettlement = {
         run: result.run,
         earnedCoins: result.earnedCoins ?? 0,
+        coinBreakdown: result.coinBreakdown!,
+        inventorySavedSlots: result.inventorySavedSlots ?? 0,
         reason: this.textPresenter.endReason(result.endedReason),
       };
       const saveResult = await saveManager.save();
@@ -263,11 +276,13 @@ export class MiningDebugPanel extends Component {
     }
 
     this.screen = 'running';
+    gameState.setPhase('running');
     this.lastLog = '继续下矿。';
     this.render();
   }
 
   private confirmAbandonRun(): void {
+    this.runManager?.abandonRun();
     this.runManager = null;
     this.lastSettlement = null;
     this.lastActionPosition = null;

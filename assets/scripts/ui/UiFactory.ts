@@ -78,7 +78,11 @@ export class UiFactory {
 
   public clear(): void {
     this.ensureRoot();
-    this.getContentRoot().removeAllChildren();
+    const contentRoot = this.getContentRoot();
+    for (const child of [...contentRoot.children]) {
+      child.destroy();
+    }
+    contentRoot.removeAllChildren();
   }
 
   public backdrop(width = 680, height = 900, fillColor: Color = new Color(0, 0, 0, 220)): Node {
@@ -251,7 +255,7 @@ export class UiFactory {
 
       UiFactory.spriteCache.set(path, spriteFrame);
       for (const waitingSprite of waitingSprites) {
-        if (waitingSprite.node?.isValid) {
+        if (waitingSprite.isValid && waitingSprite.node?.isValid) {
           waitingSprite.spriteFrame = spriteFrame;
         }
       }

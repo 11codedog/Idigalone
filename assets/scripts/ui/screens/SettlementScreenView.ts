@@ -1,6 +1,4 @@
 import type { SaveData } from '../../core/GameTypes';
-import { ORE_TYPES, RUN_CONFIG, TILE_CONFIG } from '../../config/GameConfig';
-import { inventoryCalculator } from '../../skill/InventoryCalculator';
 import type { MiningScreenActions, SettlementSnapshot } from '../MiningScreenTypes';
 import { UiFactory } from '../UiFactory';
 import { ScreenTextView } from './ScreenTextView';
@@ -29,23 +27,20 @@ export class SettlementScreenView {
   }
 
   private formatBody(settlement: SettlementSnapshot, save: SaveData): string {
-    const oreLines = ORE_TYPES
-      .filter((oreType) => settlement.run.inventory[oreType] > 0)
-      .map((oreType) => {
-        const count = settlement.run.inventory[oreType];
-        const value = count * TILE_CONFIG[oreType].oreValue;
-        return `${TILE_CONFIG[oreType].displayName} x${count} = ${value}`;
-      });
-    const depthBonus = Math.floor(settlement.run.depth / 20) * RUN_CONFIG.depthBonusPerTwentyMeters;
-    const inventoryUsage = inventoryCalculator.calculateUsage(settlement.run.inventory);
+    const breakdown = settlement.coinBreakdown;
+    const oreLines = breakdown.ores.map((ore) => `${ore.displayName} x${ore.count} = ${ore.totalValue}`);
 
     return [
       `结束原因：${settlement.reason}`,
       `最大深度：${settlement.run.depth}m`,
       oreLines.length > 0 ? oreLines.join('\n') : '没有带回矿石',
-      `矿石压缩：节省 ${inventoryUsage.savedSlots} 格背包`,
-      `深度基础奖励：${depthBonus}`,
-      `本局收入：${settlement.earnedCoins}`,
+      `矿石压缩：节省 ${settlement.inventorySavedSlots} 格背包`,
+      `矿石基础收入：${breakdown.oreValue}`,
+      `深度基础奖励：${breakdown.depthBonus}`,
+      `售价倍率：x${breakdown.oreValueMultiplier.toFixed(1)}`,
+      `倍率后收入：${breakdown.multipliedValue}`,
+      `深层额外奖励：${breakdown.deepBonus}`,
+      `本局收入：${breakdown.total}`,
       `当前金币：${save.coins}`,
     ].join('\n');
   }

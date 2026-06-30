@@ -7,23 +7,46 @@ import { PlatformResult } from '../platform/IPlatform';
 export class SaveManager {
   public static readonly storageKey = 'save_data';
 
+  private lastLoadFailed = false;
+
   public constructor(private readonly state: GameState = gameState) {}
 
-  public async load(): Promise<SaveData> {
+  public async load(): Promise<PlatformResult<SaveData>> {
     await PlatformManager.init();
     const result = await PlatformManager.platform.getStorage<SaveData>(
       SaveManager.storageKey,
       DEFAULT_SAVE_DATA,
     );
-    // 平台读取失败时也可能携带 fallback data；ok 只表达操作成败，不决定数据能否兜底使用。
     const save = this.normalizeSave(result.data ?? DEFAULT_SAVE_DATA);
+    if (!result.ok) {
+      this.lastLoadFailed = true;
+      console.warn(`[SaveManager] 存档读取失败：${result.error ?? '未知错误'}`);
+      return {
+        ok: false,
+        error: result.error ?? 'Save load failed.',
+        data: save,
+      };
+    }
+
+    this.lastLoadFailed = false;
     this.state.setSave(save);
-    return save;
+    return {
+      ok: true,
+      data: save,
+    };
   }
 
   public async save(save: SaveData = this.state.save): Promise<PlatformResult<SaveData>> {
     await PlatformManager.init();
     const normalized = this.normalizeSave(save);
+    if (this.lastLoadFailed) {
+      return {
+        ok: false,
+        error: 'Save load failed earlier; refusing to overwrite storage with fallback data.',
+        data: normalized,
+      };
+    }
+
     const result = await PlatformManager.platform.setStorage(SaveManager.storageKey, normalized);
     if (!result.ok) {
       console.warn(`[SaveManager] 存档写入失败：${result.error ?? '未知错误'}`);
@@ -45,6 +68,7 @@ export class SaveManager {
     await PlatformManager.init();
     await PlatformManager.platform.removeStorage(SaveManager.storageKey);
     const save = this.normalizeSave(DEFAULT_SAVE_DATA);
+    this.lastLoadFailed = false;
     this.state.setSave(save);
     return save;
   }
@@ -52,15 +76,24 @@ export class SaveManager {
   private normalizeSave(save: SaveData): SaveData {
     const upgrades = { ...DEFAULT_SAVE_DATA.upgrades };
     for (const key of Object.keys(upgrades) as UpgradeId[]) {
-      upgrades[key] = Math.max(1, Math.floor(save.upgrades?.[key] ?? upgrades[key]));
+      upgrades[key] = this.toSafeInteger(save.upgrades?.[key], upgrades[key], 1);
     }
 
     return {
       version: SAVE_VERSION,
-      coins: Math.max(0, Math.floor(save.coins ?? 0)),
-      bestDepth: Math.max(0, Math.floor(save.bestDepth ?? 0)),
+      coins: this.toSafeInteger(save.coins, DEFAULT_SAVE_DATA.coins, 0),
+      bestDepth: this.toSafeInteger(save.bestDepth, DEFAULT_SAVE_DATA.bestDepth, 0),
       upgrades,
     };
+  }
+
+  private toSafeInteger(value: unknown, fallback: number, min: number): number {
+    const numberValue = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numberValue)) {
+      return Math.max(min, Math.floor(fallback));
+    }
+
+    return Math.max(min, Math.floor(numberValue));
   }
 }
 

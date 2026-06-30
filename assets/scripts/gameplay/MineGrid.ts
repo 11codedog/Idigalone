@@ -26,6 +26,7 @@ interface OreVein {
   centerY: number;
   radiusX: number;
   radiusY: number;
+  slope: number;
   richness: number;
 }
 
@@ -33,6 +34,17 @@ type RandomSource = () => number;
 
 const ORE_VEIN_CHUNK_WIDTH = 12;
 const ORE_VEIN_CHUNK_HEIGHT = 8;
+const GOLDEN_RATIO_32 = 0x9e3779b9;
+
+export const MAX_CACHED_TILES = 10000;
+export const MAX_CACHED_VEINS = 4096;
+
+export interface MineGridCacheStats {
+  tiles: number;
+  veins: number;
+  maxTiles: number;
+  maxVeins: number;
+}
 
 export class MineGrid {
   public readonly width: number;
@@ -60,6 +72,15 @@ export class MineGrid {
     return position.y >= RUN_CONFIG.surfaceDepth && position.y <= this.generatedDepth;
   }
 
+  public getCacheStats(): MineGridCacheStats {
+    return {
+      tiles: this.tiles.size,
+      veins: this.veinsByChunk.size,
+      maxTiles: MAX_CACHED_TILES,
+      maxVeins: MAX_CACHED_VEINS,
+    };
+  }
+
   public reset(): void {
     this.tiles.clear();
     this.veinsByChunk.clear();
@@ -78,14 +99,12 @@ export class MineGrid {
       return this.createTile('stone');
     }
 
-    const key = this.getKey(position);
-    let tile = this.tiles.get(key);
-    if (!tile) {
-      tile = this.generateTile(position);
-      this.tiles.set(key, tile);
+    const cachedTile = this.tiles.get(this.getKey(position));
+    if (cachedTile) {
+      return { ...cachedTile };
     }
 
-    return { ...tile };
+    return this.generateTile(position);
   }
 
   public dig(position: GridPosition, damage: number): DigResult {
@@ -113,6 +132,7 @@ export class MineGrid {
         hardnessRemaining: nextHardness,
       };
       this.tiles.set(key, damagedTile);
+      this.trimTileCacheAround(position);
       return {
         tile: damagedTile,
         broken: false,
@@ -120,6 +140,7 @@ export class MineGrid {
     }
 
     this.tiles.set(key, this.createTile('empty'));
+    this.trimTileCacheAround(position);
     return {
       tile,
       broken: true,
@@ -132,6 +153,7 @@ export class MineGrid {
     }
 
     this.tiles.set(this.getKey(position), this.createTile(type));
+    this.trimTileCacheAround(position);
   }
 
   private generateTile(position: GridPosition): MineTile {
@@ -179,7 +201,8 @@ export class MineGrid {
           continue;
         }
 
-        const distanceX = Math.abs(position.x - vein.centerX) / Math.max(1, vein.radiusX);
+        const localCenterX = this.getVeinCenterXAtDepth(vein, position.y);
+        const distanceX = Math.abs(position.x - localCenterX) / Math.max(1, vein.radiusX);
         const distanceY = Math.abs(position.y - vein.centerY) / Math.max(1, vein.radiusY);
         const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
         const chance = Math.max(0.12, vein.richness * (1 - distance * 0.65));
@@ -209,6 +232,7 @@ export class MineGrid {
     );
     if (this.randomAt(chunkX, chunkY, 301) > chance) {
       this.veinsByChunk.set(key, null);
+      this.trimVeinCacheAround(chunkX, chunkY);
       return null;
     }
 
@@ -219,16 +243,28 @@ export class MineGrid {
       centerY: chunkY * ORE_VEIN_CHUNK_HEIGHT + 1 + Math.floor(this.randomAt(chunkX, chunkY, 304) * ORE_VEIN_CHUNK_HEIGHT),
       radiusX: 2 + radiusBoost,
       radiusY: 1 + (depth >= 90 ? 1 : 0),
+      slope: this.createVeinSlope(chunkX, chunkY, depth),
       richness: Math.min(0.82, 0.48 + (depth / this.generatedDepth) * 0.34),
     };
     this.veinsByChunk.set(key, vein);
+    this.trimVeinCacheAround(chunkX, chunkY);
     return vein;
   }
 
   private isInsideVein(position: GridPosition, vein: OreVein): boolean {
-    const distanceX = Math.abs(position.x - vein.centerX) / Math.max(1, vein.radiusX);
+    const localCenterX = this.getVeinCenterXAtDepth(vein, position.y);
+    const distanceX = Math.abs(position.x - localCenterX) / Math.max(1, vein.radiusX);
     const distanceY = Math.abs(position.y - vein.centerY) / Math.max(1, vein.radiusY);
     return distanceX * distanceX + distanceY * distanceY <= 1;
+  }
+
+  private getVeinCenterXAtDepth(vein: OreVein, y: number): number {
+    return vein.centerX + (y - vein.centerY) * vein.slope;
+  }
+
+  private createVeinSlope(chunkX: number, chunkY: number, depth: number): number {
+    const maxSlope = depth >= 80 ? 0.55 : 0.35;
+    return (this.randomAt(chunkX, chunkY, 305) * 2 - 1) * maxSlope;
   }
 
   private pickOreType(depth: number, rollRatio: number): OreType {
@@ -269,11 +305,66 @@ export class MineGrid {
   }
 
   private hashToUint32(x: number, y: number, salt: number): number {
-    let hash = this.seed ^ Math.imul(x | 0, 0x45d9f3b);
-    hash = Math.imul(hash ^ (y | 0), 0x45d9f3b);
-    hash = Math.imul(hash ^ salt, 0x45d9f3b);
-    hash ^= hash >>> 16;
-    return hash >>> 0;
+    let hash = this.mixUint32(this.seed + GOLDEN_RATIO_32 + (salt >>> 0));
+    hash ^= this.mixUint32((x >>> 0) + GOLDEN_RATIO_32);
+    hash = this.mixUint32(hash);
+    hash ^= this.mixUint32((y >>> 0) + 0x85ebca6b);
+    return this.mixUint32(hash);
+  }
+
+  private mixUint32(value: number): number {
+    let hash = value >>> 0;
+    hash = Math.imul(hash ^ (hash >>> 16), 0x7feb352d);
+    hash = Math.imul(hash ^ (hash >>> 15), 0x846ca68b);
+    return (hash ^ (hash >>> 16)) >>> 0;
+  }
+
+  private trimTileCacheAround(center: GridPosition): void {
+    if (this.tiles.size <= MAX_CACHED_TILES) {
+      return;
+    }
+
+    const targetSize = Math.floor(MAX_CACHED_TILES * 0.85);
+    const entries = Array.from(this.tiles.keys()).map((key) => {
+      const position = this.parseKey(key);
+      return {
+        key,
+        distance: Math.abs(position.x - center.x) + Math.abs(position.y - center.y),
+      };
+    });
+    entries.sort((a, b) => b.distance - a.distance);
+
+    for (let index = 0; this.tiles.size > targetSize && index < entries.length; index += 1) {
+      this.tiles.delete(entries[index].key);
+    }
+  }
+
+  private trimVeinCacheAround(centerChunkX: number, centerChunkY: number): void {
+    if (this.veinsByChunk.size <= MAX_CACHED_VEINS) {
+      return;
+    }
+
+    const targetSize = Math.floor(MAX_CACHED_VEINS * 0.85);
+    const entries = Array.from(this.veinsByChunk.keys()).map((key) => {
+      const position = this.parseKey(key);
+      return {
+        key,
+        distance: Math.abs(position.x - centerChunkX) + Math.abs(position.y - centerChunkY),
+      };
+    });
+    entries.sort((a, b) => b.distance - a.distance);
+
+    for (let index = 0; this.veinsByChunk.size > targetSize && index < entries.length; index += 1) {
+      this.veinsByChunk.delete(entries[index].key);
+    }
+  }
+
+  private parseKey(key: string): GridPosition {
+    const separatorIndex = key.indexOf(':');
+    return {
+      x: Number(key.slice(0, separatorIndex)),
+      y: Number(key.slice(separatorIndex + 1)),
+    };
   }
 
   private getKey(position: GridPosition): string {

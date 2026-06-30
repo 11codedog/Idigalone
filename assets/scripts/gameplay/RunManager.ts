@@ -23,6 +23,24 @@ export type RunActionType = 'move' | 'dig' | 'blocked' | 'ended';
 
 export type RunBlockReason = 'outOfBounds' | 'backpackFull' | 'upwardDigForbidden' | 'notAtSurface';
 
+export interface OreCoinBreakdown {
+  oreType: OreType;
+  displayName: string;
+  count: number;
+  unitValue: number;
+  totalValue: number;
+}
+
+export interface CoinBreakdown {
+  ores: OreCoinBreakdown[];
+  oreValue: number;
+  depthBonus: number;
+  oreValueMultiplier: number;
+  multipliedValue: number;
+  deepBonus: number;
+  total: number;
+}
+
 export interface RunActionResult {
   type: RunActionType;
   position: GridPosition;
@@ -33,6 +51,8 @@ export interface RunActionResult {
   reason?: RunBlockReason;
   endedReason?: RunEndReason;
   earnedCoins?: number;
+  coinBreakdown?: CoinBreakdown;
+  inventorySavedSlots?: number;
 }
 
 export class RunManager {
@@ -168,14 +188,49 @@ export class RunManager {
   }
 
   public calculateCoins(run: RunState): number {
+    return this.calculateCoinBreakdown(run).total;
+  }
+
+  public calculateCoinBreakdown(run: RunState): CoinBreakdown {
     const stats = this.requireStats();
-    const oreValue = ORE_TYPES.reduce(
-      (sum, oreType) => sum + run.inventory[oreType] * TILE_CONFIG[oreType].oreValue,
-      0,
-    );
+    const ores = ORE_TYPES
+      .map((oreType): OreCoinBreakdown => {
+        const count = run.inventory[oreType];
+        const unitValue = TILE_CONFIG[oreType].oreValue;
+        return {
+          oreType,
+          displayName: TILE_CONFIG[oreType].displayName,
+          count,
+          unitValue,
+          totalValue: count * unitValue,
+        };
+      })
+      .filter((ore) => ore.count > 0);
+    const oreValue = ores.reduce((sum, ore) => sum + ore.totalValue, 0);
     const depthBonus = Math.floor(run.depth / 20) * RUN_CONFIG.depthBonusPerTwentyMeters;
     const multipliedValue = Math.floor((oreValue + depthBonus) * stats.oreValueMultiplier);
-    return multipliedValue + this.buffs.getDeepBonus(run, this.activeBuffsValue);
+    const deepBonus = this.buffs.getDeepBonus(run, this.activeBuffsValue);
+    return {
+      ores,
+      oreValue,
+      depthBonus,
+      oreValueMultiplier: stats.oreValueMultiplier,
+      multipliedValue,
+      deepBonus,
+      total: multipliedValue + deepBonus,
+    };
+  }
+
+  public abandonRun(): RunState | null {
+    if (!this.runValue) {
+      this.state.abandonRun('home');
+      return null;
+    }
+
+    const abandonedRun = cloneRunState(this.runValue);
+    this.runValue = null;
+    this.state.abandonRun('home');
+    return abandonedRun;
   }
 
   private consumeOxygen(amount: number): void {
@@ -237,8 +292,10 @@ export class RunManager {
     recoveredOxygen = 0,
   ): RunActionResult {
     const run = this.requireRun();
-    const earnedCoins = this.calculateCoins(run);
+    const coinBreakdown = this.calculateCoinBreakdown(run);
+    const earnedCoins = coinBreakdown.total;
     const endedRun = cloneRunState(run);
+    const inventorySavedSlots = this.inventory.calculateUsage(run.inventory).savedSlots;
     this.state.endRun(earnedCoins);
     this.runValue = null;
 
@@ -251,6 +308,8 @@ export class RunManager {
       recoveredOxygen,
       endedReason,
       earnedCoins,
+      coinBreakdown,
+      inventorySavedSlots,
     };
   }
 
