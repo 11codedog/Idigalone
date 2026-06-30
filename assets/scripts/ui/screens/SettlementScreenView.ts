@@ -21,7 +21,7 @@ export class SettlementScreenView {
     }
 
     this.textView.renderTitleBody('本局结算', this.formatBody(settlement, save));
-    this.ui.button({ text: '再来一局', x: -200, y: -275, onClick: actions.showBuffSelect, width: 170, height: 54 });
+    this.ui.button({ text: '再来一局', x: -200, y: -275, onClick: actions.startRun, width: 170, height: 54 });
     this.ui.button({ text: '升级装备', x: 0, y: -275, onClick: actions.showUpgrade, width: 170, height: 54 });
     this.ui.button({ text: '回首页', x: 200, y: -275, onClick: actions.showHome, width: 170, height: 54 });
   }

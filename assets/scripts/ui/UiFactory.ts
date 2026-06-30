@@ -25,6 +25,15 @@ export interface RectOptions {
   parent?: Node;
 }
 
+export interface LayerOptions {
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  parent?: Node;
+}
+
 export interface ImageOptions {
   name: string;
   path: string;
@@ -109,6 +118,9 @@ export class UiFactory {
     label.fontSize = options.fontSize;
     label.lineHeight = options.fontSize + 8;
     label.color = options.color;
+    label.horizontalAlign = Label.HorizontalAlign.CENTER;
+    label.verticalAlign = Label.VerticalAlign.CENTER;
+    label.overflow = Label.Overflow.SHRINK;
 
     return label;
   }
@@ -122,9 +134,27 @@ export class UiFactory {
       y: options.y,
       width,
       height,
-      fillColor: new Color(45, 110, 170, 255),
-      strokeColor: new Color(95, 170, 230, 255),
+      fillColor: new Color(34, 96, 150, 255),
+      strokeColor: new Color(116, 206, 244, 255),
       strokeWidth: 2,
+    });
+    this.rect({
+      name: 'ButtonHighlight',
+      x: 0,
+      y: height * 0.25,
+      width: width - 10,
+      height: Math.max(5, height * 0.16),
+      fillColor: new Color(126, 216, 255, 70),
+      parent: buttonNode,
+    });
+    this.rect({
+      name: 'ButtonShadow',
+      x: 0,
+      y: -height * 0.32,
+      width: width - 12,
+      height: Math.max(4, height * 0.12),
+      fillColor: new Color(7, 18, 30, 90),
+      parent: buttonNode,
     });
 
     const button = buttonNode.addComponent(Button);
@@ -172,6 +202,20 @@ export class UiFactory {
     }
 
     return node;
+  }
+
+  public layer(options: LayerOptions): Node {
+    const node = new Node(options.name);
+    node.setParent(options.parent ?? this.getContentRoot());
+    node.setPosition(new Vec3(options.x, options.y, 0));
+
+    const transform = node.addComponent(UITransform);
+    transform.setContentSize(options.width, options.height);
+    return node;
+  }
+
+  public graphicsLayer(options: LayerOptions): Graphics {
+    return this.layer(options).addComponent(Graphics);
   }
 
   public progressBar(options: ProgressBarOptions): Node {

@@ -69,7 +69,7 @@ export class MiningScreenView {
     } else if (model.screen === 'home') {
       this.homeScreen.render(model.save, actions);
     } else if (model.screen === 'buffSelect') {
-      this.buffSelectScreen.render(model.pendingBuffChoices, actions);
+      this.buffSelectScreen.render(model.pendingBuffChoices, model.rewardReason, actions);
     } else if (model.screen === 'running') {
       return this.runningScreen.render(model, actions);
     } else if (model.screen === 'pause') {

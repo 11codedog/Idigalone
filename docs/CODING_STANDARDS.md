@@ -17,12 +17,12 @@
 
 | 类别 | 规范 | 示例 |
 |---|---|---|
-| 类 / 组件 | `PascalCase` | `RunManager`, `MiningDebugPanel` |
+| 类 / 组件 | `PascalCase` | `ContinuousRunManager`, `MiningDebugPanel` |
 | 接口 | 项目已有平台接口保留 `I` 前缀 | `IPlatform` |
-| 类型别名 | `PascalCase` | `TileType`, `GamePhase` |
-| 方法 / 局部变量 | `camelCase` | `startRun()`, `targetTile` |
+| 类型别名 | `PascalCase` | `TerrainMaterial`, `GamePhase` |
+| 方法 / 局部变量 | `camelCase` | `startRun()`, `targetPosition` |
 | 常量配置 | `SCREAMING_SNAKE_CASE` | `RUN_CONFIG`, `TILE_CONFIG` |
-| 文件名 | 与主导出类/模块同名 | `RunManager.ts`, `GameConfig.ts` |
+| 文件名 | 与主导出类/模块同名 | `ContinuousRunManager.ts`, `GameConfig.ts` |
 | Cocos 组件 | 文件名、类名、`@ccclass` 名保持一致 | `MiningDebugPanel.ts` |
 
 不为了命名规范批量改已有文件名，避免 `.meta` 和场景引用风险。
@@ -51,7 +51,7 @@ platform <- business code
 |---|---|
 | `config/` | 配置表、调参常量、轻量派生函数。 |
 | `core/` | 状态、事件、存档、升级、核心类型。 |
-| `gameplay/` | 一局流程、地图、挖掘、增益、tile 效果。 |
+| `gameplay/` | 一局流程、连续地形、挖掘、增益、地形效果。 |
 | `ui/` | Cocos 组件、页面渲染、HUD 文案、UI 工厂。 |
 | `platform/` | 平台接口、Mock、抖音实现、平台管理。 |
 
@@ -62,7 +62,7 @@ platform <- business code
 模块之间的依赖关系是单向的。一个模块改动时，不依赖它的模块不应受影响。
 
 ```
-// 例：gameplay/RunManager 改了挖矿逻辑
+// 例：gameplay/ContinuousRunManager 改了挖矿逻辑
 // core/GameState 无需修改（不依赖 gameplay）
 // ui/MiningDebugPanel 可能需要改（依赖 gameplay）
 // 但如果改的是 GameState，所有依赖它的模块都可能受影响——所以要优先保证 core 的稳定
@@ -99,19 +99,19 @@ platform <- business code
 一个模块、一个文件、一个类，只做一件事。
 
 ```
-// RunManager：管理一局游戏的流程（start / move / end）
-// MineGrid：管理网格地图（生成 / 挖掘 / 查询）
-// KeyboardMoveController：管理键盘输入（键位映射 / 连发 / 复位）
+// ContinuousRunManager：管理一局游戏的流程（start / input / end）
+// ContinuousTerrain：管理连续地形（采样 / 挖掘 delta / 查询）
+// FloatingJoystickController：管理触摸输入（触点 / 向量 / 复位）
 // ------------------------------------------------------------
-// MiningDebugPanel 不做挖矿计算，只做"按钮回调 -> 调用 RunManager -> 刷新界面"
-// KeyboardMoveController 不做游戏逻辑判断，只做"键 -> 方向"的转换
+// MiningDebugPanel 不做挖矿计算，只做"按钮回调 -> 调用 ContinuousRunManager -> 刷新界面"
+// FloatingJoystickController 不做游戏逻辑判断，只做"触点 -> 输入向量"的转换
 ```
 
 实践规则：
 
 - **一个文件 ≤ 300 行。** 超了说明它在做不止一件事，需要评估拆分。
-- **一个类只持有自己需要的状态。** `MiningDebugPanel` 不持有网格数据（那是 `MineGrid` 的事），`RunManager` 不持有 UI 节点（那是 View 的事）。
-- **Resolver 只计算不修改。** `TileEffectResolver.resolve()` 返回 delta 对象，调用方 `RunManager.applyTileEffect()` 负责落地修改。修改入口集中，容易追踪。
+- **一个类只持有自己需要的状态。** `MiningDebugPanel` 不持有地形数据（那是 `ContinuousTerrain` 的事），`ContinuousRunManager` 不持有 UI 节点（那是 View 的事）。
+- **Resolver 只计算不修改。** `DigBrushResolver.resolve()` 返回 delta 对象，调用方 `ContinuousRunManager` 负责落地修改。修改入口集中，容易追踪。
 - **Manager 持有状态不泄露。** getter 返回 clone，外部无法意外修改内部状态。
 - **新增功能先放对目录。** 不知道放哪通常是设计信号——要么模块边界模糊，要么新功能需要拆更细。
 
@@ -120,12 +120,12 @@ platform <- business code
 Cocos Component 本身就是组合模式。业务类之间同样遵循：用依赖注入（constructor 参数）组合协作者，而不是继承基类获取能力。
 
 ```
-// RunManager 的协作者通过 constructor 传入
+// ContinuousRunManager 的协作者通过 constructor 传入
 constructor(
   state: GameState = gameState,
-  grid = new MineGrid(),
+  terrain = new ContinuousTerrain(),
   buffs = buffManager,
-  tileEffects = tileEffectResolver,
+  resolver = new DigBrushResolver(),
 )
 // 测试时可以传入 mock，生产环境用默认值
 ```

@@ -1,6 +1,16 @@
 export type GamePhase = 'boot' | 'home' | 'running' | 'paused' | 'settlement';
 
-export type OreType = 'copper' | 'iron' | 'silver' | 'gold' | 'crystal' | 'obsidian';
+export type OreType =
+  | 'copper'
+  | 'coal'
+  | 'tin'
+  | 'iron'
+  | 'silver'
+  | 'gold'
+  | 'emerald'
+  | 'crystal'
+  | 'ruby'
+  | 'obsidian';
 
 export type TileType = 'empty' | 'dirt' | 'stone' | 'oxygen' | OreType;
 
@@ -68,10 +78,14 @@ export interface GameEvents {
 export function createEmptyInventory(): RunInventory {
   return {
     copper: 0,
+    coal: 0,
+    tin: 0,
     iron: 0,
     silver: 0,
     gold: 0,
+    emerald: 0,
     crystal: 0,
+    ruby: 0,
     obsidian: 0,
   };
 }

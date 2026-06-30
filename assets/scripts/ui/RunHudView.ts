@@ -1,5 +1,5 @@
 import { Color } from 'cc';
-import { BuffId, RunState } from '../core/GameTypes';
+import { RunState } from '../core/GameTypes';
 import { BUFF_CONFIG, ORE_TYPES } from '../config/GameConfig';
 import { RunHudLayout } from './RunScreenLayout';
 import { RunTextPresenter } from './RunTextPresenter';
@@ -10,7 +10,7 @@ export class RunHudView {
 
   public constructor(private readonly ui: UiFactory) {}
 
-  public render(run: RunState, selectedBuff: BuffId | null, layout: RunHudLayout): void {
+  public render(run: RunState, layout: RunHudLayout): void {
     this.ui.rect({
       name: 'RunHudPanel',
       x: 0,
@@ -22,13 +22,13 @@ export class RunHudView {
       strokeWidth: 1,
     });
 
-    this.renderSummary(run, selectedBuff, layout);
+    this.renderSummary(run, layout);
     this.renderResourceBars(run, layout);
     this.renderWarning(run, layout);
   }
 
-  private renderSummary(run: RunState, selectedBuff: BuffId | null, layout: RunHudLayout): void {
-    const buffName = selectedBuff ? BUFF_CONFIG[selectedBuff].displayName : '无';
+  private renderSummary(run: RunState, layout: RunHudLayout): void {
+    const buffName = this.formatActiveBuffs(run);
     this.ui.label({
       text: `深度 ${run.depth}m    金币预估 ${run.coinsPreview}    增益 ${buffName}`,
       x: 0,
@@ -78,7 +78,7 @@ export class RunHudView {
   ): void {
     const safeMax = Math.max(1, max);
     this.ui.label({
-      text: `${label} ${current}/${max}`,
+      text: `${label} ${this.formatMeterValue(current)}/${this.formatMeterValue(max)}`,
       x: x - 130,
       y,
       fontSize: 15,
@@ -99,6 +99,10 @@ export class RunHudView {
     });
   }
 
+  private formatMeterValue(value: number): number {
+    return Math.max(0, Math.ceil(value));
+  }
+
   private renderWarning(run: RunState, layout: RunHudLayout): void {
     this.ui.label({
       text: this.textPresenter.warningText(run),
@@ -115,5 +119,13 @@ export class RunHudView {
     const totalCount = ORE_TYPES.reduce((sum, oreType) => sum + run.inventory[oreType], 0);
     const oreKinds = ORE_TYPES.filter((oreType) => run.inventory[oreType] > 0).length;
     return `矿石 ${totalCount} 个 / ${oreKinds} 种`;
+  }
+
+  private formatActiveBuffs(run: RunState): string {
+    if (run.activeBuffs.length === 0) {
+      return '无';
+    }
+
+    return run.activeBuffs.map((buffId) => BUFF_CONFIG[buffId].displayName).join('、');
   }
 }

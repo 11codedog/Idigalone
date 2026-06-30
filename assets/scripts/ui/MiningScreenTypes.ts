@@ -1,5 +1,6 @@
-import type { BuffId, GridPosition, RunState, SaveData, UpgradeId } from '../core/GameTypes';
-import type { CoinBreakdown, MoveDirection, RunManager } from '../gameplay/RunManager';
+import type { BuffId, RunState, SaveData, UpgradeId } from '../core/GameTypes';
+import type { CoinBreakdown } from '../gameplay/RunManager';
+import type { ContinuousRunManager } from '../gameplay/ContinuousRunManager';
 
 export type MiningScreenState =
   | 'loading'
@@ -23,22 +24,20 @@ export interface MiningScreenModel {
   screen: MiningScreenState;
   save: SaveData;
   pendingBuffChoices: BuffId[];
-  selectedBuff: BuffId | null;
-  runManager: RunManager | null;
+  rewardReason: string;
+  runManager: ContinuousRunManager | null;
   lastSettlement: SettlementSnapshot | null;
-  lastActionPosition: GridPosition | null;
   lastLog: string;
   inputHint: string;
 }
 
 export interface MiningScreenActions {
   showHome(): void;
-  showBuffSelect(): void;
   showUpgrade(): void;
   showSkills(): void;
   showPause(): void;
-  startRun(buffId: BuffId): void;
-  move(direction: MoveDirection): void;
+  startRun(): void;
+  chooseRewardBuff(buffId: BuffId): void;
   returnToSurface(): void | Promise<void>;
   sellAtSurface(): void | Promise<void>;
   resumeRun(): void;

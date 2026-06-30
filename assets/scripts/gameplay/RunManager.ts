@@ -2,6 +2,7 @@ import { gameState, GameState } from '../core/GameState';
 import {
   BuffId,
   cloneRunState,
+  cloneSaveData,
   createEmptyInventory,
   GridPosition,
   OreType,
@@ -53,7 +54,24 @@ export interface RunActionResult {
   earnedCoins?: number;
   coinBreakdown?: CoinBreakdown;
   inventorySavedSlots?: number;
+  rewardChoices?: BuffId[];
+  rewardReason?: string;
 }
+
+interface PendingRewardChoice {
+  milestoneId: string;
+  reason: string;
+  choices: BuffId[];
+}
+
+const COLLECTION_REWARD_POOL: BuffId[] = [
+  'betterBuyer',
+  'biggerBag',
+  'fastPickaxe',
+  'oxygenSaver',
+  'stoneBreaker',
+  'deepBonus',
+];
 
 export class RunManager {
   public readonly grid: MineGrid;
@@ -64,8 +82,12 @@ export class RunManager {
   private readonly inventory: InventoryCalculator;
   private positionValue: GridPosition;
   private statsValue: PlayerStats | null = null;
+  private saveValue: SaveData | null = null;
   private activeBuffsValue: BuffId[] = [];
   private runValue: RunState | null = null;
+  private pendingRewardValue: PendingRewardChoice | null = null;
+  private readonly grantedRewardMilestones = new Set<string>();
+  private rareOreBonusValue = 0;
 
   public constructor(
     state: GameState = gameState,
@@ -98,6 +120,7 @@ export class RunManager {
   }
 
   public start(save: SaveData = this.state.save, activeBuffs: BuffId[] = []): RunState {
+    const baseSave = cloneSaveData(save);
     const stats = this.buffs.applyToStats(getPlayerStats(save), activeBuffs);
     const modifiers = this.buffs.getModifiers(activeBuffs);
     const run: RunState = {
@@ -111,12 +134,13 @@ export class RunManager {
       activeBuffs: [...activeBuffs],
     };
 
+    this.saveValue = baseSave;
     this.statsValue = stats;
     this.activeBuffsValue = [...activeBuffs];
     this.runValue = run;
-    this.grid.setGenerationOptions({
-      rareOreBonus: modifiers.rareOreBonus,
-    });
+    this.pendingRewardValue = null;
+    this.grantedRewardMilestones.clear();
+    this.applyRareOreBonus(modifiers.rareOreBonus, true);
     this.positionValue = {
       x: this.grid.centerX,
       y: 0,
@@ -168,6 +192,7 @@ export class RunManager {
       this.applyTileEffect(effect);
       collectedOre = effect.collectedOre;
       recoveredOxygen = effect.recoveredOxygen;
+      this.tryCreateCollectionReward(collectedOre);
     }
 
     this.refreshCoinsPreview();
@@ -233,6 +258,25 @@ export class RunManager {
     return abandonedRun;
   }
 
+  public chooseRewardBuff(buffId: BuffId): RunState | null {
+    const pendingReward = this.pendingRewardValue;
+    if (!pendingReward || pendingReward.choices.indexOf(buffId) < 0) {
+      return null;
+    }
+
+    const run = this.requireRun();
+    if (this.activeBuffsValue.indexOf(buffId) < 0) {
+      this.activeBuffsValue.push(buffId);
+    }
+
+    run.activeBuffs = [...this.activeBuffsValue];
+    this.pendingRewardValue = null;
+    this.refreshStatsFromActiveBuffs();
+    this.refreshCoinsPreview();
+    this.syncRun();
+    return cloneRunState(run);
+  }
+
   private consumeOxygen(amount: number): void {
     const run = this.requireRun();
     const actualCost = this.buffs.getOxygenCost(Math.max(0, amount), this.activeBuffsValue);
@@ -282,6 +326,8 @@ export class RunManager {
       targetTile,
       collectedOre,
       recoveredOxygen,
+      rewardChoices: this.pendingRewardValue?.choices,
+      rewardReason: this.pendingRewardValue?.reason,
     };
   }
 
@@ -326,6 +372,56 @@ export class RunManager {
   private syncRun(): void {
     const run = this.requireRun();
     this.state.updateRun(cloneRunState(run));
+  }
+
+  private tryCreateCollectionReward(collectedOre: OreType | undefined): void {
+    if (!collectedOre || this.pendingRewardValue) {
+      return;
+    }
+
+    const run = this.requireRun();
+    if (collectedOre === 'copper' && run.inventory.copper >= 50) {
+      this.createRewardChoices('collectCopper50', '铜矿 x50', COLLECTION_REWARD_POOL);
+    }
+  }
+
+  private createRewardChoices(milestoneId: string, reason: string, pool: BuffId[]): void {
+    if (this.grantedRewardMilestones.has(milestoneId)) {
+      return;
+    }
+
+    const availablePool = pool.filter((buffId) => this.activeBuffsValue.indexOf(buffId) < 0);
+    const choices = this.buffs.chooseRandomBuffs(3, Math.random, availablePool);
+    if (choices.length === 0) {
+      return;
+    }
+
+    this.grantedRewardMilestones.add(milestoneId);
+    this.pendingRewardValue = {
+      milestoneId,
+      reason,
+      choices,
+    };
+  }
+
+  private refreshStatsFromActiveBuffs(): void {
+    const save = this.saveValue ?? this.state.save;
+    const stats = this.buffs.applyToStats(getPlayerStats(save), this.activeBuffsValue);
+    const modifiers = this.buffs.getModifiers(this.activeBuffsValue);
+    const run = this.requireRun();
+    this.statsValue = stats;
+    run.backpackCapacity = stats.backpackCapacity;
+    run.activeBuffs = [...this.activeBuffsValue];
+    this.applyRareOreBonus(modifiers.rareOreBonus);
+  }
+
+  private applyRareOreBonus(rareOreBonus: number, forceReset = false): void {
+    if (!forceReset && this.rareOreBonusValue === rareOreBonus) {
+      return;
+    }
+
+    this.rareOreBonusValue = rareOreBonus;
+    this.grid.setGenerationOptions({ rareOreBonus });
   }
 
   private getTargetPosition(direction: MoveDirection): GridPosition {

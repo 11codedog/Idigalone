@@ -31,8 +31,12 @@ const SELECTABLE_BUFFS: BuffId[] = [
 ];
 
 export class BuffManager {
-  public chooseRandomBuffs(count = 3, random: () => number = Math.random): BuffId[] {
-    const pool = [...SELECTABLE_BUFFS];
+  public chooseRandomBuffs(
+    count = 3,
+    random: () => number = Math.random,
+    sourcePool: BuffId[] = SELECTABLE_BUFFS,
+  ): BuffId[] {
+    const pool = [...sourcePool];
     const result: BuffId[] = [];
 
     while (result.length < count && pool.length > 0) {
@@ -85,7 +89,7 @@ export class BuffManager {
     }
 
     const modifiers = this.getModifiers(activeBuffs);
-    return Math.max(1, Math.floor(baseCost * modifiers.oxygenCostMultiplier));
+    return Math.max(0, baseCost * modifiers.oxygenCostMultiplier);
   }
 
   public getDigDamage(baseDamage: number, activeBuffs: BuffId[], tileType: TileType): number {

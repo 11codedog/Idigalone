@@ -32,7 +32,7 @@ export class SkillsScreenView {
     this.renderEffectSummary(modifiers.oreStackLimit, modifiers.oreStackSlotCost);
 
     this.ui.button({ text: '返回首页', x: -120, y: -250, onClick: actions.showHome, width: 160, height: 52 });
-    this.ui.button({ text: '开始下矿', x: 120, y: -250, onClick: actions.showBuffSelect, width: 160, height: 52 });
+    this.ui.button({ text: '开始下矿', x: 120, y: -250, onClick: actions.startRun, width: 160, height: 52 });
   }
 
   private renderSkillList(equippedSkills: SkillId[]): void {

@@ -11,7 +11,7 @@
 | 系统 | 生效方式 | 作用 | 示例 |
 |---|---|---|---|
 | 装备升级 | 局外永久成长 | 稳定提升基础能力 | 氧气瓶提高氧气上限 |
-| Roguelite 增益 | 每局三选一 | 本局制造变化 | 高价出货、富矿嗅觉 |
+| Roguelite 增益 | 局内收集目标触发三选一 | 本局制造变化 | 高价出货、破石专家 |
 | 技能系统 | 解锁后携带生效 | 改变玩法规则 | 矿石压缩 |
 
 边界原则：
@@ -54,7 +54,7 @@
 |---|---|---|
 | 首页“技能”按钮 | 打开当前已启用技能页 | 只展示，不做技能解锁 |
 | 技能页 | 显示技能名、启用状态、效果说明、占格示例 | 不修改存档，不影响局内输入 |
-| 技能页“开始下矿” | 进入增益选择流程 | 与首页开始下矿一致 |
+| 技能页“开始下矿” | 直接进入下矿流程 | 与首页开始下矿一致，局内达成目标后再触发三选一 |
 
 第一版技能页的目标是解决“功能存在但玩家看不见”的问题。后续如果要做技能解锁，再扩展 `SaveData`，并把技能页从“展示页”升级为“解锁/携带页”。
 
@@ -82,9 +82,8 @@ assets/scripts/skill/
 
 ```text
 挖到矿石
-  -> TileEffectResolver 返回 inventoryDelta
-  -> RunManager 判断 delta 后背包是否还能容纳
-  -> RunManager 更新 inventory
+  -> DigBrushResolver 返回 inventoryDelta 和 terrain delta
+  -> ContinuousRunManager 应用挖掘 delta 并更新 inventory
   -> InventoryCalculator 重新计算 backpackUsed
   -> HUD 显示 used/capacity
   -> 技能页/结算页展示矿石压缩效果
@@ -92,9 +91,9 @@ assets/scripts/skill/
 
 ## 工程约束
 
-- `TileEffectResolver` 只返回 delta，不计算背包规则。
+- `DigBrushResolver` 只返回 delta，不计算背包规则、不直接修改状态。
 - 背包占用只能由 `InventoryCalculator` 计算。
-- `RunManager` 只负责流程和状态写入，不写具体技能特例。
+- `ContinuousRunManager` 只负责流程和状态写入，不写具体技能特例。
 - UI 只展示结果，不参与技能规则计算。
 - 第一版不扩展 `SaveData`，后续做技能解锁时再加入存档结构。
 

@@ -13,7 +13,7 @@ export class RunTextPresenter {
       return '背包已满，回到地表出售后升级背包。';
     }
 
-    return '向上只能走已经挖空的路，不能向上挖。左右没有地图边界。';
+    return '按住摇杆自由挖掘，向上、斜向都可以；氧气和硬度决定能贪多远。';
   }
 
   public warningColor(run: RunState): Color {
@@ -40,7 +40,7 @@ export class RunTextPresenter {
 
   public blockReason(reason: RunBlockReason | undefined): string {
     if (reason === 'upwardDigForbidden') {
-      return '不能向上挖，只能向上经过已经挖空的路';
+      return '这个方向暂时挖不动，换个角度继续打通';
     }
 
     if (reason === 'backpackFull') {

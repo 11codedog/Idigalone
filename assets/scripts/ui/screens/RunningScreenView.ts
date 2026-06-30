@@ -1,6 +1,6 @@
 import { Color } from 'cc';
 import type { MiningScreenActions, MiningScreenModel } from '../MiningScreenTypes';
-import { MineGridView } from '../MineGridView';
+import { ContinuousTerrainView } from '../ContinuousTerrainView';
 import { RunFooterView } from '../RunFooterView';
 import { RunHudView } from '../RunHudView';
 import { createRunScreenLayout } from '../RunScreenLayout';
@@ -12,12 +12,12 @@ export interface RunningScreenLogLayout {
 }
 
 export class RunningScreenView {
-  private readonly gridView: MineGridView;
+  private readonly terrainView: ContinuousTerrainView;
   private readonly hudView: RunHudView;
   private readonly footerView: RunFooterView;
 
   public constructor(private readonly ui: UiFactory) {
-    this.gridView = new MineGridView(ui);
+    this.terrainView = new ContinuousTerrainView(ui);
     this.hudView = new RunHudView(ui);
     this.footerView = new RunFooterView(ui);
   }
@@ -30,9 +30,9 @@ export class RunningScreenView {
     }
 
     const layout = createRunScreenLayout(this.ui.getLayoutMetrics());
-    this.hudView.render(run, model.selectedBuff, layout.hud);
+    this.hudView.render(run, layout.hud);
     this.ui.label({
-      text: '图例：蓝=玩家 深色=空地 棕=泥土 灰=石头\n橙=铜矿 银=银矿 灰白=铁矿 金=金矿 蓝绿=水晶 深紫=黑曜 绿=氧气',
+      text: '按住摇杆自由挖掘，挖到铜矿 x50 会触发矿工灵感。',
       x: 0,
       y: layout.legendY,
       fontSize: 15,
@@ -40,7 +40,7 @@ export class RunningScreenView {
       width: layout.legendWidth,
       height: 48,
     });
-    this.gridView.render(model.runManager, model.lastActionPosition, layout.grid);
+    this.terrainView.render(model.runManager, layout.grid);
     this.footerView.render(model.runManager, run, model.inputHint, actions, layout.footer);
 
     return { logY: layout.logY, logWidth: layout.logWidth };

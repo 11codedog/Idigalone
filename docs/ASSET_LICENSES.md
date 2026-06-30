@@ -13,6 +13,12 @@
 | 银矿脉 | 银矿 tile/sprite | `assets/resources/art/sprites/ore_silver.png` | 已从 chroma-key 源图抠透明。 |
 | 矿工主角 | 玩家角色 sprite | `assets/resources/art/sprites/miner_protagonist.png` | 已从 chroma-key 源图抠透明。 |
 
+## 程序化占位美术
+
+| 资源 | 用途 | 落点 | 备注 |
+|---|---|---|---|
+| 程序化地形纹理 | 煤、锡、铁、金、翡翠、水晶、红宝、黑曜等连续地形材质 | `assets/scripts/ui/ContinuousTerrainView.ts` | 不新增运行时 PNG，不需要 `.meta`；正式美术导入后再补资源记录。 |
+
 ## 源图
 
 透明资源的 chroma-key 源图保留在：
