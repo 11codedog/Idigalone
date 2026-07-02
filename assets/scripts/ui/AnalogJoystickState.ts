@@ -30,6 +30,10 @@ export class AnalogJoystickState {
   }
 
   public begin(pointerId: number, point: AnalogJoystickPoint): void {
+    if (this.activePointerId !== null) {
+      return;
+    }
+
     this.activePointerId = pointerId;
     this.baseValue = { ...point };
     this.currentValue = { ...point };

@@ -1,4 +1,5 @@
-import { isOreType } from '../config/GameConfig';
+import { ORE_TYPES } from '../config/GameConfig';
+import { OreType } from '../core/GameTypes';
 import { TerrainMaterial } from '../gameplay/terrain/TerrainTypes';
 
 export interface TerrainRgba {
@@ -9,6 +10,22 @@ export interface TerrainRgba {
 }
 
 export class TerrainColorPalette {
+  public caveColor(depth: number, grain: number): TerrainRgba {
+    return this.adjust(COLORS.air, -Math.max(0, depth - 20) * 0.08 + (grain - 0.5) * 10);
+  }
+
+  public soilColor(hostMaterial: TerrainMaterial, depth: number, grain: number, edgeShade: number): TerrainRgba {
+    const base = this.getSoilBaseColor(hostMaterial);
+    const depthShade = -Math.max(0, depth - 20) * 0.16;
+    const grainShade = (grain - 0.5) * this.getGrainStrength(hostMaterial);
+    return this.adjust(base, depthShade + grainShade - edgeShade);
+  }
+
+  public oreColor(material: TerrainMaterial, depth: number, grain: number): TerrainRgba {
+    const base = this.isOreMaterial(material) ? COLORS[material] : COLORS.oxygen;
+    return this.adjust(base, -Math.max(0, depth - 40) * 0.08 + (grain - 0.5) * 42);
+  }
+
   public colorFor(material: TerrainMaterial, depth: number, grain: number, edgeShade: number): TerrainRgba {
     const base = this.getBaseColor(material);
     const depthShade = material === 'air' ? 0 : -Math.max(0, depth - 20) * 0.16;
@@ -33,11 +50,27 @@ export class TerrainColorPalette {
       return COLORS.oxygen;
     }
 
-    if (isOreType(material)) {
+    if (this.isOreMaterial(material)) {
       return COLORS[material];
     }
 
     return COLORS.fallback;
+  }
+
+  private getSoilBaseColor(material: TerrainMaterial): TerrainRgba {
+    if (material === 'air') {
+      return COLORS.air;
+    }
+
+    if (material === 'stone') {
+      return COLORS.stone;
+    }
+
+    return COLORS.dirt;
+  }
+
+  private isOreMaterial(material: TerrainMaterial): material is OreType {
+    return ORE_TYPES.indexOf(material as OreType) >= 0;
   }
 
   private getGrainStrength(material: TerrainMaterial): number {

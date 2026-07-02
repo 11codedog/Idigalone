@@ -3,18 +3,14 @@ import { MoveDirection } from '../gameplay/RunManager';
 
 interface KeyboardMoveActions {
   isRunning(): boolean;
-  move(direction: MoveDirection): void;
+  move(direction: MoveDirection, deltaTime: number): void;
   canSellAtSurface(): boolean;
   sellAtSurface(): void;
 }
 
-const INITIAL_REPEAT_DELAY = 0.18;
-const REPEAT_INTERVAL = 0.12;
-
 export class KeyboardMoveController {
   private readonly pressedMoveKeys = new Map<KeyCode, MoveDirection>();
   private activeDirection: MoveDirection | null = null;
-  private repeatTimer = 0;
 
   public constructor(private readonly actions: KeyboardMoveActions) {}
 
@@ -36,8 +32,6 @@ export class KeyboardMoveController {
 
     this.pressedMoveKeys.set(event.keyCode, direction);
     this.activeDirection = direction;
-    this.repeatTimer = INITIAL_REPEAT_DELAY;
-    this.actions.move(direction);
   }
 
   public handleKeyUp(event: EventKeyboard): void {
@@ -46,7 +40,6 @@ export class KeyboardMoveController {
     }
 
     this.activeDirection = this.getLastPressedDirection();
-    this.repeatTimer = REPEAT_INTERVAL;
   }
 
   public update(deltaTime: number): void {
@@ -59,19 +52,12 @@ export class KeyboardMoveController {
       return;
     }
 
-    this.repeatTimer -= deltaTime;
-    if (this.repeatTimer > 0) {
-      return;
-    }
-
-    this.actions.move(this.activeDirection);
-    this.repeatTimer = REPEAT_INTERVAL;
+    this.actions.move(this.activeDirection, deltaTime);
   }
 
   public reset(): void {
     this.pressedMoveKeys.clear();
     this.activeDirection = null;
-    this.repeatTimer = 0;
   }
 
   private getLastPressedDirection(): MoveDirection | null {

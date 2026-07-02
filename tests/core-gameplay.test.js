@@ -1,4 +1,6 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 const {
   DEFAULT_SAVE_DATA,
@@ -71,6 +73,69 @@ test('AnalogJoystickState clamps strength and ignores unrelated pointers', () =>
   assert.strictEqual(joystick.isActive, false);
 });
 
+test('AnalogJoystickState keeps the first active pointer during browser mouse touch overlap', () => {
+  const { AnalogJoystickState } = require('../assets/scripts/ui/AnalogJoystickState');
+  const joystick = new AnalogJoystickState({ deadZone: 6, maxRadius: 60 });
+
+  joystick.begin(2, { x: 0, y: 0 });
+  joystick.begin(1, { x: 100, y: 100 });
+  joystick.move(2, { x: 40, y: 0 });
+
+  assert.deepStrictEqual(joystick.getInput(), { x: 1, y: 0, strength: 40 / 60 });
+  joystick.end(1);
+  assert.strictEqual(joystick.isActive, true);
+});
+
+test('ContinuousRenderScheduler coalesces held-input render requests', () => {
+  const { ContinuousRenderScheduler } = require('../assets/scripts/ui/ContinuousRenderScheduler');
+  const scheduler = new ContinuousRenderScheduler(0.1);
+
+  scheduler.request();
+  assert.strictEqual(scheduler.update(1 / 60), true);
+
+  scheduler.request();
+  assert.strictEqual(scheduler.update(1 / 60), false);
+  scheduler.request();
+  assert.strictEqual(scheduler.update(1 / 60), false);
+  scheduler.request();
+  assert.strictEqual(scheduler.update(0.08), true);
+  assert.strictEqual(scheduler.update(0.2), false);
+});
+
+test('TerrainViewportFrame keeps surface air visible when a run starts', () => {
+  const { createTerrainViewportFrame } = require('../assets/scripts/ui/TerrainViewportFrame');
+
+  const frame = createTerrainViewportFrame({
+    playerPosition: { x: 0, y: 0 },
+    viewWidth: 360,
+    viewHeight: 520,
+    worldWidth: 16,
+    worldHeight: 20,
+    surfaceY: 0,
+  });
+
+  assert.ok(frame.center.y > 0);
+  assert.ok(frame.playerScreenPosition.y > 0);
+  assert.ok(frame.soilRect.height > 0);
+  assert.ok(frame.soilRect.height < 520);
+});
+
+test('TerrainViewportFrame fills soil once the surface is above the viewport', () => {
+  const { createTerrainViewportFrame } = require('../assets/scripts/ui/TerrainViewportFrame');
+
+  const frame = createTerrainViewportFrame({
+    playerPosition: { x: 0, y: 35 },
+    viewWidth: 360,
+    viewHeight: 520,
+    worldWidth: 16,
+    worldHeight: 20,
+    surfaceY: 0,
+  });
+
+  assert.strictEqual(frame.playerScreenPosition.y, 0);
+  assert.strictEqual(frame.soilRect.height, 520);
+});
+
 function anglePoint(degrees, radius) {
   const radians = degrees * Math.PI / 180;
   return {
@@ -85,6 +150,7 @@ test('ContinuousTerrain samples air at surface and mostly dirt in shallow ground
 
   assert.strictEqual(terrain.sample({ x: 0.25, y: 0 }).material, 'air');
   assert.strictEqual(terrain.sample({ x: -12.8, y: -3.4 }).material, 'air');
+  assert.notStrictEqual(terrain.sample({ x: 0.25, y: 0.25 }).material, 'air');
 
   let dirtCount = 0;
   let sampleCount = 0;
@@ -128,32 +194,188 @@ test('ContinuousTerrain is deterministic and produces varied mid-depth materials
   assert.ok([...materials].some((material) => ORE_TYPES.includes(material)));
 });
 
-test('TerrainVisualSampler creates deterministic fine-grain natural terrain colors', () => {
+test('ContinuousTerrain ore chance starts sparse and eases into a capped peak', () => {
+  const { getContinuousOreChance } = require('../assets/scripts/gameplay/terrain/ContinuousTerrain');
+
+  const surfaceChance = getContinuousOreChance(0);
+  const midChance = getContinuousOreChance(70);
+  const peakChance = getContinuousOreChance(140);
+  const deeperChance = getContinuousOreChance(220);
+
+  assert.ok(surfaceChance < midChance);
+  assert.ok(midChance < peakChance);
+  assert.strictEqual(peakChance, deeperChance);
+  assert.ok(surfaceChance <= 0.018);
+  assert.ok(peakChance <= 0.2);
+});
+
+test('TerrainVisualSampler creates sprite-ready ore samples without oxygen packs', () => {
   const { ContinuousTerrain } = require('../assets/scripts/gameplay/terrain/ContinuousTerrain');
   const { TerrainVisualSampler } = require('../assets/scripts/ui/TerrainVisualSampler');
   const terrain = new ContinuousTerrain({ seed: 112233 });
+  const orePosition = findAnyContinuousOre(terrain, 8, 90);
+
+  const sample = new TerrainVisualSampler().sampleOreSprites({
+    terrain,
+    center: orePosition,
+    worldWidth: 4,
+    worldHeight: 4,
+  });
+
+  assert.ok(sample.ores.length > 0);
+  assert.ok(sample.ores.every((ore) => ORE_TYPES.includes(ore.material)));
+  assert.ok(sample.ores.every((ore) => ore.alpha >= 150));
+});
+
+test('TerrainVisualSampler caps ore sprites around priority position instead of viewport top edge', () => {
+  const { TerrainVisualSampler } = require('../assets/scripts/ui/TerrainVisualSampler');
+  const terrain = new DenseCopperTerrain();
+
+  const sample = new TerrainVisualSampler().sampleOreSprites({
+    terrain,
+    center: { x: 0, y: 10 },
+    worldWidth: 4,
+    worldHeight: 20,
+    maxOres: 1,
+    priorityPosition: { x: 0, y: 15 },
+  });
+
+  assert.strictEqual(sample.ores.length, 1);
+  assert.ok(sample.ores[0].position.y >= 14.5);
+});
+
+test('TerrainVisualSampler soil tile samples keep dug air after visual mask is gone', () => {
+  const { ContinuousTerrain } = require('../assets/scripts/gameplay/terrain/ContinuousTerrain');
+  const { DigBrushResolver } = require('../assets/scripts/gameplay/terrain/DigBrushResolver');
+  const { TerrainVisualSampler } = require('../assets/scripts/ui/TerrainVisualSampler');
+  const terrain = new ContinuousTerrain({ seed: 334455 });
   const sampler = new TerrainVisualSampler();
+  const dirtPosition = findContinuousMaterial(terrain, 'dirt', 6, 18);
+  const coordinate = terrain.getSampleCoordinate(dirtPosition);
 
-  const first = sampler.sample({
+  const before = sampler.sampleSoilTiles({
     terrain,
-    center: { x: 0, y: 24 },
-    worldWidth: 16,
-    worldHeight: 20,
+    center: dirtPosition,
+    worldWidth: 3,
+    worldHeight: 3,
   });
-  const second = sampler.sample({
+  assert.ok(before.tiles.some((tile) => tile.coordinate.x === coordinate.x && tile.coordinate.y === coordinate.y));
+
+  const result = new DigBrushResolver().resolve(terrain, {
+    center: dirtPosition,
+    radius: 0.35,
+    digPower: 4,
+  });
+  terrain.applyDigDelta(result.digDelta);
+
+  const after = sampler.sampleSoilTiles({
     terrain,
-    center: { x: 0, y: 24 },
-    worldWidth: 16,
-    worldHeight: 20,
+    center: dirtPosition,
+    worldWidth: 3,
+    worldHeight: 3,
+  });
+  assert.ok(!after.tiles.some((tile) => tile.coordinate.x === coordinate.x && tile.coordinate.y === coordinate.y));
+});
+
+test('TerrainDigMask creates soft circular brush coverage', () => {
+  const { TerrainDigMask } = require('../assets/scripts/ui/TerrainDigMask');
+  const mask = new TerrainDigMask();
+
+  mask.addBrush({ center: { x: 4, y: 6 }, radius: 1, softness: 0.3 });
+
+  assert.strictEqual(mask.getCoverage({ x: 4, y: 6 }), 0);
+  assert.strictEqual(mask.getCoverage({ x: 6, y: 6 }), 1);
+  const edgeCoverage = mask.getCoverage({ x: 4.8, y: 6 });
+  assert.ok(edgeCoverage > 0 && edgeCoverage < 1);
+});
+
+test('TerrainDigMask connects multiple brush stamps into a continuous tunnel', () => {
+  const { TerrainDigMask } = require('../assets/scripts/ui/TerrainDigMask');
+  const mask = new TerrainDigMask();
+
+  mask.addBrush({ center: { x: 0, y: 0 }, radius: 0.8, softness: 0.2 });
+  mask.addBrush({ center: { x: 0.6, y: 0 }, radius: 0.8, softness: 0.2 });
+  mask.addBrush({ center: { x: 1.2, y: 0 }, radius: 0.8, softness: 0.2 });
+
+  assert.strictEqual(mask.getCoverage({ x: 0.3, y: 0 }), 0);
+  assert.strictEqual(mask.getCoverage({ x: 0.9, y: 0 }), 0);
+  assert.ok(mask.getCoverage({ x: 0.6, y: 0.72 }) > 0 && mask.getCoverage({ x: 0.6, y: 0.72 }) < 1);
+});
+
+test('TerrainDigMask exposes connected brush strokes for smooth rendering', () => {
+  const { TerrainDigMask } = require('../assets/scripts/ui/TerrainDigMask');
+  const mask = new TerrainDigMask();
+
+  mask.addBrush({ center: { x: 0, y: 0 }, radius: 0.5, softness: 0.2 });
+  mask.addBrush({ center: { x: 0.7, y: 0.1 }, radius: 0.5, softness: 0.2 });
+
+  const strokes = mask.getStrokes();
+  assert.strictEqual(strokes.length, 1);
+  assert.deepStrictEqual(strokes[0].from, { x: 0, y: 0 });
+  assert.deepStrictEqual(strokes[0].to, { x: 0.7, y: 0.1 });
+  assert.strictEqual(strokes[0].radius, 0.5);
+});
+
+test('TerrainDigMask does not connect distant brush stamps into accidental tunnels', () => {
+  const { TerrainDigMask } = require('../assets/scripts/ui/TerrainDigMask');
+  const mask = new TerrainDigMask();
+
+  mask.addBrush({ center: { x: 0, y: 0 }, radius: 0.5, softness: 0.2 });
+  mask.addBrush({ center: { x: 8, y: 0 }, radius: 0.5, softness: 0.2 });
+
+  assert.strictEqual(mask.getStrokes().length, 0);
+  assert.strictEqual(mask.getCoverage({ x: 4, y: 0 }), 1);
+});
+
+test('TerrainDigMask bounds retained brushes for mobile rendering cost', () => {
+  const { MAX_TERRAIN_DIG_MASK_BRUSHES, TerrainDigMask } = require('../assets/scripts/ui/TerrainDigMask');
+  const mask = new TerrainDigMask();
+
+  for (let index = 0; index < MAX_TERRAIN_DIG_MASK_BRUSHES + 20; index += 1) {
+    mask.addBrush({ center: { x: index, y: 0 }, radius: 0.5, softness: 0.2 });
+  }
+
+  assert.ok(mask.getBrushes().length <= MAX_TERRAIN_DIG_MASK_BRUSHES);
+  assert.strictEqual(mask.getCoverage({ x: 0, y: 0 }), 1);
+  assert.strictEqual(mask.getCoverage({ x: MAX_TERRAIN_DIG_MASK_BRUSHES + 19, y: 0 }), 0);
+});
+
+test('TerrainDigMask prunes brush history outside the current viewport', () => {
+  const { TerrainDigMask } = require('../assets/scripts/ui/TerrainDigMask');
+  const mask = new TerrainDigMask();
+
+  mask.addBrush({ center: { x: 0, y: 0 }, radius: 0.5, softness: 0.2 });
+  mask.addBrush({ center: { x: 1, y: 0 }, radius: 0.5, softness: 0.2 });
+  mask.addBrush({ center: { x: 20, y: 20 }, radius: 0.5, softness: 0.2 });
+
+  mask.pruneOutsideView({ x: 0, y: 0 }, 4, 4, 1);
+
+  assert.strictEqual(mask.getBrushes().length, 2);
+  assert.strictEqual(mask.getCoverage({ x: 20, y: 20 }), 1);
+  assert.strictEqual(mask.getCoverage({ x: 0, y: 0 }), 0);
+});
+
+test('TerrainVisualSampler applies dig mask to runtime soil tiles', () => {
+  const { ContinuousTerrain } = require('../assets/scripts/gameplay/terrain/ContinuousTerrain');
+  const { TerrainDigMask } = require('../assets/scripts/ui/TerrainDigMask');
+  const { TerrainVisualSampler } = require('../assets/scripts/ui/TerrainVisualSampler');
+  const terrain = new ContinuousTerrain({ seed: 778899 });
+  const dirtPosition = findContinuousMaterial(terrain, 'dirt', 8, 16);
+  const coordinate = terrain.getSampleCoordinate(dirtPosition);
+  const digMask = new TerrainDigMask();
+  digMask.addBrush({ center: dirtPosition, radius: 0.9, softness: 0.35 });
+
+  const sample = new TerrainVisualSampler().sampleSoilTiles({
+    terrain,
+    center: dirtPosition,
+    worldWidth: 3,
+    worldHeight: 3,
+    digMask,
   });
 
-  assert.ok(first.width >= 160);
-  assert.ok(first.height >= 220);
-  assert.strictEqual(first.cells.length, first.width * first.height);
-  assert.deepStrictEqual(second.cells, first.cells);
-
-  const uniqueColors = new Set(first.cells.slice(0, 1200).map((cell) => `${cell.r},${cell.g},${cell.b},${cell.a}`));
-  assert.ok(uniqueColors.size >= 12);
+  assert.ok(!sample.tiles.some((tile) => tile.coordinate.x === coordinate.x && tile.coordinate.y === coordinate.y));
+  assert.ok(sample.tiles.some((tile) => tile.color.a > 0 && tile.color.a < 255));
+  assert.ok(sample.tiles.some((tile) => tile.color.a === 255));
 });
 
 test('DigBrushResolver clears dirt without inventory and does not mutate until applied', () => {
@@ -213,34 +435,67 @@ test('DigBrushResolver collects ore units and respects material hardness', () =>
 test('ContinuousRunManager moves by elapsed time and normalizes diagonal speed', () => {
   const { ContinuousRunManager } = require('../assets/scripts/gameplay/ContinuousRunManager');
 
-  const shortRunManager = new ContinuousRunManager();
-  shortRunManager.start(DEFAULT_SAVE_DATA);
-  shortRunManager.applyInput({ x: 1, y: 0, strength: 1 }, 0.25);
+  const shortRunManager = new ContinuousRunManager(new GameState(), new FixedContinuousTerrain('air'));
+  shortRunManager.start(DEFAULT_SAVE_DATA, [], { x: 0, y: 5 });
+  shortRunManager.applyInput({ x: 1, y: 0, strength: 1 }, 0.02);
 
-  const longRunManager = new ContinuousRunManager();
-  longRunManager.start(DEFAULT_SAVE_DATA);
-  longRunManager.applyInput({ x: 1, y: 0, strength: 1 }, 1);
+  const longRunManager = new ContinuousRunManager(new GameState(), new FixedContinuousTerrain('air'));
+  longRunManager.start(DEFAULT_SAVE_DATA, [], { x: 0, y: 5 });
+  longRunManager.applyInput({ x: 1, y: 0, strength: 1 }, 0.05);
 
   assert.ok(longRunManager.playerPosition.x > shortRunManager.playerPosition.x * 2);
 
-  const horizontalRunManager = new ContinuousRunManager();
-  horizontalRunManager.start(DEFAULT_SAVE_DATA);
+  const horizontalRunManager = new ContinuousRunManager(new GameState(), new FixedContinuousTerrain('air'));
+  const horizontalStart = horizontalRunManager.start(DEFAULT_SAVE_DATA, [], { x: 0, y: 5 });
   horizontalRunManager.applyInput({ x: 1, y: 0, strength: 1 }, 1);
 
-  const diagonalRunManager = new ContinuousRunManager();
-  diagonalRunManager.start(DEFAULT_SAVE_DATA);
-  diagonalRunManager.applyInput({ x: 1, y: -1, strength: 1 }, 1);
+  const diagonalRunManager = new ContinuousRunManager(new GameState(), new FixedContinuousTerrain('air'));
+  const diagonalStart = diagonalRunManager.start(DEFAULT_SAVE_DATA, [], { x: 0, y: 5 });
+  diagonalRunManager.applyInput({ x: 1, y: 1, strength: 1 }, 1);
 
   const horizontalDistance = Math.sqrt(
     horizontalRunManager.playerPosition.x * horizontalRunManager.playerPosition.x +
-    horizontalRunManager.playerPosition.y * horizontalRunManager.playerPosition.y,
+    (horizontalRunManager.playerPosition.y - horizontalStart.depth) *
+      (horizontalRunManager.playerPosition.y - horizontalStart.depth),
   );
   const diagonalDistance = Math.sqrt(
     diagonalRunManager.playerPosition.x * diagonalRunManager.playerPosition.x +
-    diagonalRunManager.playerPosition.y * diagonalRunManager.playerPosition.y,
+    (diagonalRunManager.playerPosition.y - diagonalStart.depth) *
+      (diagonalRunManager.playerPosition.y - diagonalStart.depth),
   );
 
   assert.ok(Math.abs(horizontalDistance - diagonalDistance) < 0.00001);
+});
+
+test('ContinuousRunManager clamps mobile frame spikes instead of teleporting', () => {
+  const { ContinuousRunManager } = require('../assets/scripts/gameplay/ContinuousRunManager');
+  const { CONTINUOUS_RUN_CONFIG } = require('../assets/scripts/gameplay/ContinuousRunTypes');
+  const runManager = new ContinuousRunManager(new GameState(), new FixedContinuousTerrain('air'));
+
+  runManager.start(DEFAULT_SAVE_DATA, [], { x: 0, y: 5 });
+  runManager.applyInput({ x: 1, y: 0, strength: 1 }, 0.5);
+
+  const maxFrameDistance = CONTINUOUS_RUN_CONFIG.moveSpeedPerSecond * CONTINUOUS_RUN_CONFIG.maxInputDeltaTime;
+  assert.ok(runManager.playerPosition.x <= maxFrameDistance + 0.000001);
+});
+
+test('ContinuousRunManager substeps joystick input so mobile digging stays continuous', () => {
+  const { ContinuousRunManager } = require('../assets/scripts/gameplay/ContinuousRunManager');
+  const { CONTINUOUS_RUN_CONFIG } = require('../assets/scripts/gameplay/ContinuousRunTypes');
+  const resolver = new RecordingDigResolver();
+  const runManager = new ContinuousRunManager(
+    new GameState(),
+    new FixedContinuousTerrain('dirt'),
+    undefined,
+    resolver,
+  );
+
+  runManager.start(DEFAULT_SAVE_DATA, [], { x: 0, y: 5 });
+  const result = runManager.applyInput({ x: 1, y: 0, strength: 1 }, CONTINUOUS_RUN_CONFIG.maxInputDeltaTime);
+
+  assert.strictEqual(result.type, 'dig');
+  assert.ok(resolver.centers.length > 1);
+  assert.strictEqual(result.digResult.removedMaterialUnits, resolver.centers.length);
 });
 
 test('ContinuousRunManager allows upward digging and consumes oxygen underground', () => {
@@ -254,6 +509,111 @@ test('ContinuousRunManager allows upward digging and consumes oxygen underground
   assert.ok(result.position.y < startY);
   assert.ok(result.run.oxygen < run.maxOxygen);
   assert.ok(result.run.depth >= 4);
+});
+
+test('ContinuousRunManager keeps the player from moving above the surface', () => {
+  const { ContinuousRunManager } = require('../assets/scripts/gameplay/ContinuousRunManager');
+  const runManager = new ContinuousRunManager();
+
+  runManager.start(DEFAULT_SAVE_DATA, [], { x: 0, y: 0 });
+  const result = runManager.applyInput({ x: 0, y: -1, strength: 1 }, 1);
+
+  assert.strictEqual(result.position.y, 0);
+  assert.strictEqual(runManager.playerPosition.y, 0);
+});
+
+test('DigBrushResolver can remove the first soil layer below surface air', () => {
+  const { ContinuousTerrain } = require('../assets/scripts/gameplay/terrain/ContinuousTerrain');
+  const { DigBrushResolver } = require('../assets/scripts/gameplay/terrain/DigBrushResolver');
+  const terrain = new ContinuousTerrain({ seed: 12345 });
+  const resolver = new DigBrushResolver();
+  const position = { x: 0.25, y: 0.25 };
+
+  const result = resolver.resolve(terrain, {
+    center: position,
+    radius: 0.35,
+    digPower: 4,
+  });
+
+  assert.ok(result.removedMaterialUnits > 0);
+  terrain.applyDigDelta(result.digDelta);
+  assert.strictEqual(terrain.sample(position).material, 'air');
+});
+
+test('ContinuousRunManager refuses ore dig deltas that would overflow backpack', () => {
+  const { ContinuousRunManager } = require('../assets/scripts/gameplay/ContinuousRunManager');
+  const runManager = new ContinuousRunManager(new GameState(), new FixedContinuousTerrain('copper'));
+
+  runManager.start(DEFAULT_SAVE_DATA, [], { x: 0, y: 1 });
+  for (let index = 0; index < 30; index += 1) {
+    runManager.applyInput({ x: 1, y: 0, strength: 1 }, 1);
+  }
+
+  const run = runManager.run;
+  assert.ok(run.backpackUsed <= run.backpackCapacity);
+  assert.ok(run.inventory.copper <= run.backpackCapacity * 5);
+});
+
+test('ContinuousRunManager applies oxygen pack recovery after dig oxygen cost', () => {
+  const { ContinuousRunManager } = require('../assets/scripts/gameplay/ContinuousRunManager');
+  const runManager = new ContinuousRunManager(new GameState(), new FixedContinuousTerrain('oxygen'));
+  const startRun = runManager.start(DEFAULT_SAVE_DATA, [], { x: 0, y: 5 });
+
+  const result = runManager.applyInput({ x: 1, y: 0, strength: 1 }, 1);
+
+  assert.ok(result.digResult.recoveredOxygen > 0);
+  assert.strictEqual(result.run.oxygen, startRun.maxOxygen);
+});
+
+test('OreMagnetResolver returns only nearby ore candidates sorted by distance', () => {
+  const { OreMagnetResolver } = require('../assets/scripts/gameplay/terrain/OreMagnetResolver');
+  const terrain = new SparseContinuousTerrain([
+    { coordinate: { x: 2, y: 10 }, material: 'copper' },
+    { coordinate: { x: 3, y: 10 }, material: 'stone' },
+    { coordinate: { x: 4, y: 10 }, material: 'silver' },
+    { coordinate: { x: 12, y: 10 }, material: 'gold' },
+  ]);
+
+  const candidates = new OreMagnetResolver().resolve(terrain, {
+    center: { x: 1.2, y: 5.25 },
+    radius: 1.2,
+  });
+
+  assert.deepStrictEqual(candidates.map((candidate) => candidate.material), ['copper', 'silver']);
+  assert.ok(candidates[0].distanceSquared <= candidates[1].distanceSquared);
+});
+
+test('ContinuousRunManager magnet collects nearby ore without digging or oxygen cost', () => {
+  const { ContinuousRunManager } = require('../assets/scripts/gameplay/ContinuousRunManager');
+  const terrain = new SparseContinuousTerrain([
+    { coordinate: { x: 2, y: 10 }, material: 'copper' },
+    { coordinate: { x: 3, y: 10 }, material: 'oxygen' },
+  ]);
+  const runManager = new ContinuousRunManager(new GameState(), terrain);
+  const run = runManager.start(DEFAULT_SAVE_DATA, [], { x: 0.55, y: 5.25 });
+  const copperCenter = terrain.getSampleCenter({ x: 2, y: 10 });
+  const oxygenCenter = terrain.getSampleCenter({ x: 3, y: 10 });
+
+  const result = runManager.applyInput({ x: 1, y: 0, strength: 1 }, 0.02);
+
+  assert.strictEqual(result.type, 'move');
+  assert.strictEqual(result.collectedOre, 'copper');
+  assert.strictEqual(result.run.inventory.copper, 1);
+  assert.ok(result.run.oxygen < run.maxOxygen);
+  assert.ok(result.run.oxygen > run.maxOxygen - 0.01);
+  assert.strictEqual(terrain.sample(copperCenter).material, 'air');
+  assert.strictEqual(terrain.sample(oxygenCenter).material, 'oxygen');
+});
+
+test('ContinuousTerrain rich vein generation option increases ore samples within capped probability', () => {
+  const { ContinuousTerrain } = require('../assets/scripts/gameplay/terrain/ContinuousTerrain');
+  const normalTerrain = new ContinuousTerrain({ seed: 24680 });
+  const richTerrain = new ContinuousTerrain({ seed: 24680, rareOreBonus: 0.12 });
+
+  const normalOreCount = countContinuousOreSamples(normalTerrain, 6, 18);
+  const richOreCount = countContinuousOreSamples(richTerrain, 6, 18);
+
+  assert.ok(richOreCount > normalOreCount);
 });
 
 test('BuffManager keeps fractional oxygen costs for continuous movement', () => {
@@ -283,6 +643,138 @@ test('Continuous oxygen economy supports short runs instead of frame-rate drain'
   assert.ok(heavyDigCost < 1.2);
 });
 
+class FixedContinuousTerrain {
+  constructor(material) {
+    this.material = material;
+  }
+
+  sample() {
+    return { material: this.material, hardness: 1 };
+  }
+
+  sampleAtCoordinate() {
+    return { material: this.material, hardness: 1 };
+  }
+
+  getSampleCoordinate(position) {
+    return {
+      x: Math.floor(position.x / 0.5),
+      y: Math.floor(position.y / 0.5),
+    };
+  }
+
+  getSampleCenter(coordinate) {
+    return {
+      x: (coordinate.x + 0.5) * 0.5,
+      y: (coordinate.y + 0.5) * 0.5,
+    };
+  }
+
+  applyDigDelta() {}
+
+  setGenerationOptions() {}
+}
+
+class DenseCopperTerrain {
+  sample(position) {
+    return position.y <= 0
+      ? { material: 'air', hardness: 0 }
+      : { material: 'copper', hardness: 1 };
+  }
+
+  sampleAtCoordinate(coordinate) {
+    return this.sample(this.getSampleCenter(coordinate));
+  }
+
+  getSampleCoordinate(position) {
+    return {
+      x: Math.floor(position.x / 0.5),
+      y: Math.floor(position.y / 0.5),
+    };
+  }
+
+  getSampleCenter(coordinate) {
+    return {
+      x: (coordinate.x + 0.5) * 0.5,
+      y: (coordinate.y + 0.5) * 0.5,
+    };
+  }
+}
+
+class SparseContinuousTerrain {
+  constructor(entries) {
+    this.materialByKey = new Map(entries.map((entry) => [this.getKey(entry.coordinate), entry.material]));
+  }
+
+  sample(position) {
+    if (position.y <= 0) {
+      return { material: 'air', hardness: 0 };
+    }
+
+    return this.sampleAtCoordinate(this.getSampleCoordinate(position));
+  }
+
+  sampleAtCoordinate(coordinate) {
+    const material = this.materialByKey.get(this.getKey(coordinate)) ?? 'air';
+    return {
+      material,
+      hardness: material === 'air' ? 0 : 1,
+    };
+  }
+
+  getSampleCoordinate(position) {
+    return {
+      x: Math.floor(position.x / 0.5),
+      y: Math.floor(position.y / 0.5),
+    };
+  }
+
+  getSampleCenter(coordinate) {
+    return {
+      x: (coordinate.x + 0.5) * 0.5,
+      y: (coordinate.y + 0.5) * 0.5,
+    };
+  }
+
+  applyDigDelta(delta) {
+    for (const sample of delta.removedSamples) {
+      this.materialByKey.set(this.getKey(sample.coordinate), 'air');
+    }
+  }
+
+  setGenerationOptions() {}
+
+  getKey(coordinate) {
+    return `${coordinate.x}:${coordinate.y}`;
+  }
+}
+
+class RecordingDigResolver {
+  constructor() {
+    this.centers = [];
+  }
+
+  resolve(terrain, request) {
+    this.centers.push({ ...request.center });
+    return {
+      removedMaterialUnits: 1,
+      inventoryDelta: {},
+      oxygenCost: 0,
+      recoveredOxygen: 0,
+      slowedByHardness: false,
+      digDelta: {
+        removedSamples: [
+          {
+            coordinate: terrain.getSampleCoordinate(request.center),
+            material: 'dirt',
+            units: 1,
+          },
+        ],
+      },
+    };
+  }
+}
+
 function findContinuousMaterial(terrain, material, minDepth, maxDepth) {
   for (let y = minDepth; y <= maxDepth; y += 0.5) {
     for (let x = -40; x <= 40; x += 0.5) {
@@ -294,6 +786,34 @@ function findContinuousMaterial(terrain, material, minDepth, maxDepth) {
   }
 
   throw new Error(`Could not find continuous material ${material}`);
+}
+
+function findAnyContinuousOre(terrain, minDepth, maxDepth) {
+  for (let y = minDepth; y <= maxDepth; y += 0.5) {
+    for (let x = -40; x <= 40; x += 0.5) {
+      const position = { x: x + 0.25, y: y + 0.25 };
+      const material = terrain.sample(position).material;
+      if (ORE_TYPES.includes(material)) {
+        return position;
+      }
+    }
+  }
+
+  throw new Error('Could not find continuous ore');
+}
+
+function countContinuousOreSamples(terrain, minDepth, maxDepth) {
+  let oreCount = 0;
+  for (let y = minDepth; y <= maxDepth; y += 0.5) {
+    for (let x = -30; x <= 30; x += 0.5) {
+      const material = terrain.sample({ x: x + 0.25, y: y + 0.25 }).material;
+      if (ORE_TYPES.includes(material)) {
+        oreCount += 1;
+      }
+    }
+  }
+
+  return oreCount;
 }
 
 test('MineGrid allows horizontal expansion while keeping vertical bounds', () => {
@@ -413,6 +933,13 @@ test('Ore config exposes early and rare ore variety through inventory and reward
     assert.strictEqual(typeof inventory[oreType], 'number');
     assert.ok(TILE_CONFIG[oreType].oreValue > 0);
     assert.ok(TILE_CONFIG[oreType].backpackSize > 0);
+  }
+});
+
+test('Every configured ore has a sprite resource png', () => {
+  for (const oreType of ORE_TYPES) {
+    const spritePath = path.join(__dirname, '..', 'assets', 'resources', 'art', 'sprites', `ore_${oreType}.png`);
+    assert.ok(fs.existsSync(spritePath), `missing sprite for ${oreType}`);
   }
 });
 

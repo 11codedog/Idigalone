@@ -6,6 +6,11 @@ export interface RunBuffModifiers {
   oreValueMultiplierBonus: number;
   digDamageBonus: number;
   stoneDigDamageBonus: number;
+  /**
+   * 稀有矿石生成概率加成（加法叠加）。
+   * 注意：如果未来允许多次叠加，应确保总和不超过合理上限（建议 < 0.5），
+   * 否则可能导致矿石生成概率饱和。
+   */
   rareOreBonus: number;
   deepBonusPerTenMeters: number;
 }

@@ -1,87 +1,192 @@
 import { ContinuousTerrain } from '../gameplay/terrain/ContinuousTerrain';
-import { ContinuousPosition, TerrainMaterial } from '../gameplay/terrain/TerrainTypes';
+import { ORE_TYPES } from '../config/GameConfig';
+import { OreType } from '../core/GameTypes';
+import { ContinuousPosition, TerrainMaterial, TerrainSampleCoordinate } from '../gameplay/terrain/TerrainTypes';
 import { TerrainColorPalette, TerrainRgba } from './TerrainColorPalette';
+import { TerrainDigMask } from './TerrainDigMask';
 
 export interface TerrainVisualSampleRequest {
   terrain: ContinuousTerrain;
   center: ContinuousPosition;
   worldWidth: number;
   worldHeight: number;
-  width?: number;
-  height?: number;
+  digMask?: TerrainDigMask;
+  maxOres?: number;
+  priorityPosition?: ContinuousPosition;
 }
 
-export interface TerrainVisualCell extends TerrainRgba {
+export interface TerrainLayerColor extends TerrainRgba {
   material: TerrainMaterial;
 }
 
-export interface TerrainVisualSample {
-  width: number;
-  height: number;
-  cells: TerrainVisualCell[];
+export interface TerrainOreSprite {
+  material: OreType;
+  position: ContinuousPosition;
+  alpha: number;
+  scale: number;
+  rotation: number;
 }
 
-const DEFAULT_WIDTH = 160;
-const DEFAULT_HEIGHT = 220;
+export interface TerrainOreSpriteSample {
+  ores: TerrainOreSprite[];
+}
+
+export interface TerrainSoilTile {
+  coordinate: TerrainSampleCoordinate;
+  position: ContinuousPosition;
+  color: TerrainLayerColor;
+}
+
+export interface TerrainSoilTileSample {
+  tiles: TerrainSoilTile[];
+}
 
 export class TerrainVisualSampler {
   public constructor(private readonly palette = new TerrainColorPalette()) {}
 
-  public sample(request: TerrainVisualSampleRequest): TerrainVisualSample {
-    const width = Math.max(160, Math.floor(request.width ?? DEFAULT_WIDTH));
-    const height = Math.max(220, Math.floor(request.height ?? DEFAULT_HEIGHT));
-    const cells: TerrainVisualCell[] = [];
+  public sampleOreSprites(request: TerrainVisualSampleRequest): TerrainOreSpriteSample {
+    const bounds = this.getVisibleSampleBounds(request);
+    const ores: TerrainOreSprite[] = [];
 
-    for (let row = 0; row < height; row += 1) {
-      for (let column = 0; column < width; column += 1) {
-        const world = this.toWorld(request, width, height, column, row);
-        const material = request.terrain.sample(world).material;
-        const grain = this.noise(world.x, world.y, column, row);
-        const edgeShade = this.getEdgeShade(request.terrain, world, material, request.worldWidth / width);
-        cells.push({
-          ...this.palette.colorFor(material, world.y, grain, edgeShade),
-          material,
+    for (let y = bounds.min.y; y <= bounds.max.y; y += 1) {
+      for (let x = bounds.min.x; x <= bounds.max.x; x += 1) {
+        const coordinate = { x, y };
+        const sample = request.terrain.sampleAtCoordinate(coordinate);
+        if (!this.isOreMaterial(sample.material)) {
+          continue;
+        }
+
+        const position = request.terrain.getSampleCenter(coordinate);
+        const coverage = request.digMask ? request.digMask.getCoverage(position) : 1;
+        if (coverage <= 0.08) {
+          continue;
+        }
+
+        const grain = this.noise(position.x, position.y, x, y);
+        ores.push({
+          material: sample.material,
+          position,
+          alpha: Math.max(150, Math.min(245, Math.round((0.72 + (1 - coverage) * 0.2) * 255))),
+          scale: 0.82 + grain * 0.22,
+          rotation: (grain - 0.5) * 10,
         });
       }
     }
 
     return {
-      width,
-      height,
-      cells,
+      ores: this.limitOreSprites(ores, request),
     };
   }
 
-  private toWorld(
+  private limitOreSprites(
+    ores: TerrainOreSprite[],
     request: TerrainVisualSampleRequest,
-    width: number,
-    height: number,
-    column: number,
-    row: number,
-  ): ContinuousPosition {
-    return {
-      x: request.center.x + (column / width - 0.5) * request.worldWidth,
-      y: request.center.y + (row / height - 0.5) * request.worldHeight,
-    };
-  }
-
-  private getEdgeShade(
-    terrain: ContinuousTerrain,
-    world: ContinuousPosition,
-    material: TerrainMaterial,
-    step: number,
-  ): number {
-    if (material === 'air') {
-      return 0;
+  ): TerrainOreSprite[] {
+    const maxOres = Math.floor(request.maxOres ?? ores.length);
+    if (ores.length <= maxOres) {
+      return ores;
     }
 
+    const priority = request.priorityPosition ?? request.center;
+    return [...ores]
+      .sort((a, b) => (
+        this.getSquaredDistance(a.position, priority) - this.getSquaredDistance(b.position, priority) ||
+        a.position.y - b.position.y ||
+        a.position.x - b.position.x
+      ))
+      .slice(0, Math.max(0, maxOres));
+  }
+
+  public sampleSoilTiles(request: TerrainVisualSampleRequest): TerrainSoilTileSample {
+    const bounds = this.getVisibleSampleBounds(request);
+    const tiles: TerrainSoilTile[] = [];
+
+    for (let y = bounds.min.y; y <= bounds.max.y; y += 1) {
+      for (let x = bounds.min.x; x <= bounds.max.x; x += 1) {
+        const coordinate = { x, y };
+        const sample = request.terrain.sampleAtCoordinate(coordinate);
+        if (sample.material === 'air') {
+          continue;
+        }
+
+        const position = request.terrain.getSampleCenter(coordinate);
+        const coverage = request.digMask ? request.digMask.getCoverage(position) : 1;
+        if (coverage <= 0.03) {
+          continue;
+        }
+
+        const grain = this.noise(position.x, position.y, x, y);
+        const hostMaterial = this.getHostMaterial(sample.material, position.y, grain);
+        const edgeShade = coverage < 1
+          ? 34 * (1 - coverage)
+          : this.getCoordinateEdgeShade(request.terrain, coordinate);
+        tiles.push({
+          coordinate,
+          position,
+          color: {
+            ...this.palette.soilColor(hostMaterial, position.y, grain, edgeShade),
+            a: Math.round(coverage * 255),
+            material: hostMaterial,
+          },
+        });
+      }
+    }
+
+    return { tiles };
+  }
+
+  private getVisibleSampleBounds(request: TerrainVisualSampleRequest): {
+    min: TerrainSampleCoordinate;
+    max: TerrainSampleCoordinate;
+  } {
+    const topLeft = {
+      x: request.center.x - request.worldWidth / 2,
+      y: request.center.y - request.worldHeight / 2,
+    };
+    const bottomRight = {
+      x: request.center.x + request.worldWidth / 2,
+      y: request.center.y + request.worldHeight / 2,
+    };
+    return {
+      min: request.terrain.getSampleCoordinate(topLeft),
+      max: request.terrain.getSampleCoordinate(bottomRight),
+    };
+  }
+
+  private getCoordinateEdgeShade(terrain: ContinuousTerrain, coordinate: TerrainSampleCoordinate): number {
     const neighbors = [
-      terrain.sample({ x: world.x + step, y: world.y }).material,
-      terrain.sample({ x: world.x - step, y: world.y }).material,
-      terrain.sample({ x: world.x, y: world.y + step }).material,
-      terrain.sample({ x: world.x, y: world.y - step }).material,
+      terrain.sampleAtCoordinate({ x: coordinate.x + 1, y: coordinate.y }).material,
+      terrain.sampleAtCoordinate({ x: coordinate.x - 1, y: coordinate.y }).material,
+      terrain.sampleAtCoordinate({ x: coordinate.x, y: coordinate.y + 1 }).material,
+      terrain.sampleAtCoordinate({ x: coordinate.x, y: coordinate.y - 1 }).material,
     ];
     return neighbors.some((neighbor) => neighbor === 'air') ? 32 : 0;
+  }
+
+  private getHostMaterial(material: TerrainMaterial, depth: number, grain: number): TerrainMaterial {
+    if (material === 'air') {
+      return 'air';
+    }
+
+    if (material === 'stone') {
+      return 'stone';
+    }
+
+    if (depth > 70 && grain > 0.68) {
+      return 'stone';
+    }
+
+    return 'dirt';
+  }
+
+  private isOreMaterial(material: TerrainMaterial): material is OreType {
+    return ORE_TYPES.indexOf(material as OreType) >= 0;
+  }
+
+  private getSquaredDistance(a: ContinuousPosition, b: ContinuousPosition): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
   }
 
   private noise(x: number, y: number, column: number, row: number): number {

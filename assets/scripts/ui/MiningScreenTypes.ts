@@ -1,6 +1,7 @@
 import type { BuffId, RunState, SaveData, UpgradeId } from '../core/GameTypes';
 import type { CoinBreakdown } from '../gameplay/RunManager';
 import type { ContinuousRunManager } from '../gameplay/ContinuousRunManager';
+import type { TerrainDigMask } from './TerrainDigMask';
 
 export type MiningScreenState =
   | 'loading'
@@ -26,6 +27,7 @@ export interface MiningScreenModel {
   pendingBuffChoices: BuffId[];
   rewardReason: string;
   runManager: ContinuousRunManager | null;
+  terrainDigMask: TerrainDigMask;
   lastSettlement: SettlementSnapshot | null;
   lastLog: string;
   inputHint: string;

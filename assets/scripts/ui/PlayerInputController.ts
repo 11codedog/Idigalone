@@ -12,8 +12,6 @@ interface PlayerInputActions {
   sellAtSurface(): void;
 }
 
-const KEYBOARD_STEP_SECONDS = 0.12;
-
 export class PlayerInputController {
   private readonly keyboard: KeyboardMoveController;
   private readonly joystick: FloatingJoystickController;
@@ -21,7 +19,7 @@ export class PlayerInputController {
   public constructor(actions: PlayerInputActions) {
     this.keyboard = new KeyboardMoveController({
       isRunning: actions.isRunning,
-      move: (direction: MoveDirection) => actions.applyInput(this.toInputVector(direction), KEYBOARD_STEP_SECONDS),
+      move: (direction: MoveDirection, deltaTime: number) => actions.applyInput(this.toInputVector(direction), deltaTime),
       canSellAtSurface: actions.canSellAtSurface,
       sellAtSurface: actions.sellAtSurface,
     });

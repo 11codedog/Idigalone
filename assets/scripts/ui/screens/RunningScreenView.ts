@@ -40,7 +40,7 @@ export class RunningScreenView {
       width: layout.legendWidth,
       height: 48,
     });
-    this.terrainView.render(model.runManager, layout.grid);
+    this.terrainView.render(model.runManager, layout.grid, model.terrainDigMask);
     this.footerView.render(model.runManager, run, model.inputHint, actions, layout.footer);
 
     return { logY: layout.logY, logWidth: layout.logWidth };

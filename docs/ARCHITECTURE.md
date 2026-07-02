@@ -87,7 +87,9 @@ platform <- business code
 - `RunHudView` 负责顶部 HUD。
 - `RunFooterView` 负责底部操作提示、暂停、地表出售。
 - `ContinuousTerrainView` 只负责连续矿洞材质可视化，不处理挖掘、结算或存档。
-- `TerrainVisualSampler` 是纯视觉采样器，把 `ContinuousTerrain` 周边区域转换成细颗粒 RGBA 数据；它不能修改地形或一局状态。
+- `TerrainVisualSampler` 是纯视觉采样器，把 `ContinuousTerrain` 周边区域转换成真实土层 tile 和矿石 sprite 采样数据；它不能修改地形或一局状态。
+- `TerrainDigMask` 只用于当前挖掘柔边/笔触过渡，不能替代 `ContinuousTerrain` 的真实地形状态。
+- 有上限的运行时渲染列表必须在采样层定义优先级，例如矿石 sprite 按玩家附近优先，而不是按遍历顺序截断。
 - `AnalogJoystickState` 是纯输入状态机，负责 deadzone、强度、角度和指针归属；`FloatingJoystickController` 只把 Cocos 事件转成状态机输入。
 - `RunTextPresenter` 负责提示、阻挡原因、结束原因和矿块名称文案。
 - `UiFactory` 负责用代码创建基础 UI 节点和资源加载。

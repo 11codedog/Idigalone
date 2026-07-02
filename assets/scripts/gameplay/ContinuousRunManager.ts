@@ -17,7 +17,8 @@ import { calculateContinuousCoinBreakdown } from './ContinuousRunEconomy';
 import { ContinuousRunRewardTracker } from './ContinuousRunRewardTracker';
 import { ContinuousTerrain } from './terrain/ContinuousTerrain';
 import { DigBrushResolver, DigBrushResult } from './terrain/DigBrushResolver';
-import { ContinuousPosition, InputVector, TerrainMaterial } from './terrain/TerrainTypes';
+import { OreMagnetResolver } from './terrain/OreMagnetResolver';
+import { ContinuousPosition, InputVector, TerrainMaterial, Vec2Like } from './terrain/TerrainTypes';
 import { normalizeVector } from './terrain/VectorMath';
 import { CONTINUOUS_RUN_CONFIG, ContinuousRunActionResult, ContinuousRunActionType } from './ContinuousRunTypes';
 import type { CoinBreakdown, RunEndReason } from './RunManager';
@@ -30,6 +31,7 @@ export class ContinuousRunManager {
   private readonly state: GameState;
   private readonly buffs: BuffManager;
   private readonly resolver: DigBrushResolver;
+  private readonly magnetResolver: OreMagnetResolver;
   private readonly inventory: InventoryCalculator;
   private readonly rewards: ContinuousRunRewardTracker;
   private positionValue: ContinuousPosition = { x: 0, y: 0 };
@@ -43,6 +45,7 @@ export class ContinuousRunManager {
     terrain = new ContinuousTerrain({ seed: Math.floor(Math.random() * 0x7fffffff) }),
     buffs = buffManager,
     resolver = new DigBrushResolver(),
+    magnetResolver = new OreMagnetResolver(),
     inventory = inventoryCalculator,
     rewards = new ContinuousRunRewardTracker(),
   ) {
@@ -50,6 +53,7 @@ export class ContinuousRunManager {
     this.terrain = terrain;
     this.buffs = buffs;
     this.resolver = resolver;
+    this.magnetResolver = magnetResolver;
     this.inventory = inventory;
     this.rewards = rewards;
   }
@@ -69,8 +73,10 @@ export class ContinuousRunManager {
   ): RunState {
     const baseSave = cloneSaveData(save);
     const stats = this.buffs.applyToStats(getPlayerStats(save), activeBuffs);
+    const modifiers = this.buffs.getModifiers(activeBuffs);
+    const safeStartPosition = this.clampToPlayableDepth(startPosition);
     const run: RunState = {
-      depth: Math.max(0, Math.floor(startPosition.y)),
+      depth: Math.max(0, Math.floor(safeStartPosition.y)),
       oxygen: stats.maxOxygen,
       maxOxygen: stats.maxOxygen,
       backpackUsed: 0,
@@ -83,7 +89,8 @@ export class ContinuousRunManager {
     this.saveValue = baseSave;
     this.statsValue = stats;
     this.activeBuffsValue = [...activeBuffs];
-    this.positionValue = { ...startPosition };
+    this.terrain.setGenerationOptions({ rareOreBonus: modifiers.rareOreBonus });
+    this.positionValue = safeStartPosition;
     this.runValue = run;
     this.rewards.reset();
     this.refreshCoinsPreview();
@@ -103,29 +110,25 @@ export class ContinuousRunManager {
       return this.createResult('idle');
     }
 
-    const distance = CONTINUOUS_RUN_CONFIG.moveSpeedPerSecond * Math.min(1, input.strength) * safeDeltaTime;
-    const target = {
-      x: this.positionValue.x + direction.x * distance,
-      y: this.positionValue.y + direction.y * distance,
-    };
-    const targetSample = this.terrain.sample(target);
+    const strength = Math.min(1, input.strength);
+    const simulatedDeltaTime = Math.min(safeDeltaTime, CONTINUOUS_RUN_CONFIG.maxInputDeltaTime);
+    const distance = CONTINUOUS_RUN_CONFIG.moveSpeedPerSecond * strength * simulatedDeltaTime;
+    const stepCount = Math.max(1, Math.ceil(distance / CONTINUOUS_RUN_CONFIG.maxSimulationStepDistance));
+    const stepDeltaTime = simulatedDeltaTime / stepCount;
     let actionType: ContinuousRunActionType = 'move';
     let digResult: DigBrushResult | undefined;
-    let moveRatio = 1;
 
-    if (targetSample.material !== 'air') {
-      actionType = 'dig';
-      digResult = this.digAt(target, targetSample.material);
-      moveRatio = digResult.removedMaterialUnits > 0 ? 1 : CONTINUOUS_RUN_CONFIG.blockedMoveRatio;
-      this.applyDigResult(digResult);
+    for (let step = 0; step < stepCount; step += 1) {
+      const stepResult = this.applyInputStep(direction, strength, stepDeltaTime);
+      if (stepResult.actionType === 'dig') {
+        actionType = 'dig';
+      }
+      digResult = this.mergeDigResults(digResult, stepResult.digResult);
+      if (run.oxygen <= 0) {
+        break;
+      }
     }
 
-    this.positionValue = {
-      x: this.positionValue.x + direction.x * distance * moveRatio,
-      y: this.positionValue.y + direction.y * distance * moveRatio,
-    };
-    this.consumeOxygen(getContinuousActionOxygenCost(this.positionValue.y, safeDeltaTime, digResult));
-    this.refreshDepth();
     this.refreshCoinsPreview();
     const collectedOre = getFirstCollectedOre(digResult);
     this.rewards.tryCreateCollectionReward(collectedOre, run, this.activeBuffsValue, this.buffs);
@@ -145,6 +148,50 @@ export class ContinuousRunManager {
       rewardChoices: pendingReward?.choices,
       rewardReason: pendingReward?.reason,
     };
+  }
+
+  private applyInputStep(
+    direction: Vec2Like,
+    strength: number,
+    deltaTime: number,
+  ): { actionType: ContinuousRunActionType; digResult?: DigBrushResult } {
+    const distance = CONTINUOUS_RUN_CONFIG.moveSpeedPerSecond * strength * deltaTime;
+    const target = this.clampToPlayableDepth({
+      x: this.positionValue.x + direction.x * distance,
+      y: this.positionValue.y + direction.y * distance,
+    });
+    const targetSample = this.terrain.sample(target);
+    let actionType: ContinuousRunActionType = 'move';
+    let digResult: DigBrushResult | undefined;
+    let moveRatio = 1;
+
+    if (targetSample.material !== 'air') {
+      actionType = 'dig';
+      const resolvedDigResult = this.digAt(target, targetSample.material);
+      if (this.canApplyDigResult(resolvedDigResult)) {
+        digResult = resolvedDigResult;
+        moveRatio = digResult.removedMaterialUnits > 0 ? 1 : CONTINUOUS_RUN_CONFIG.blockedMoveRatio;
+        this.applyDigResult(digResult);
+      } else {
+        moveRatio = CONTINUOUS_RUN_CONFIG.blockedMoveRatio;
+      }
+    }
+
+    this.positionValue = this.clampToPlayableDepth({
+      x: this.positionValue.x + direction.x * distance * moveRatio,
+      y: this.positionValue.y + direction.y * distance * moveRatio,
+    });
+    const magnetResult = this.collectNearbyOres();
+    if (magnetResult) {
+      this.applyDigResult(magnetResult);
+      digResult = this.mergeDigResults(digResult, magnetResult);
+    }
+    this.consumeOxygen(getContinuousActionOxygenCost(this.positionValue.y, deltaTime, digResult));
+    if (digResult) {
+      this.recoverOxygen(digResult.recoveredOxygen);
+    }
+    this.refreshDepth();
+    return { actionType, digResult };
   }
 
   public returnToSurface(): ContinuousRunActionResult {
@@ -216,10 +263,111 @@ export class ContinuousRunManager {
     run.backpackUsed = this.inventory.calculateUsage(run.inventory).usedSlots;
   }
 
+  private collectNearbyOres(): DigBrushResult | undefined {
+    const run = this.requireRun();
+    const removedSamples = [];
+    const inventoryDelta: Partial<Record<OreType, number>> = {};
+
+    for (const candidate of this.magnetResolver.resolve(this.terrain, {
+      center: this.positionValue,
+      radius: CONTINUOUS_RUN_CONFIG.oreMagnetRadius,
+    })) {
+      const nextInventoryDelta = {
+        ...inventoryDelta,
+        [candidate.material]: (inventoryDelta[candidate.material] ?? 0) + 1,
+      };
+      if (!this.inventory.canApplyDelta(run.inventory, nextInventoryDelta, run.backpackCapacity)) {
+        continue;
+      }
+
+      inventoryDelta[candidate.material] = nextInventoryDelta[candidate.material];
+      removedSamples.push({
+        coordinate: { ...candidate.coordinate },
+        material: candidate.material,
+        units: 1,
+      });
+    }
+
+    if (removedSamples.length === 0) {
+      return undefined;
+    }
+
+    return {
+      removedMaterialUnits: removedSamples.length,
+      inventoryDelta,
+      oxygenCost: 0,
+      recoveredOxygen: 0,
+      slowedByHardness: false,
+      digDelta: {
+        removedSamples,
+      },
+    };
+  }
+
+  private canApplyDigResult(result: DigBrushResult): boolean {
+    const run = this.requireRun();
+    return this.inventory.canApplyDelta(run.inventory, result.inventoryDelta, run.backpackCapacity);
+  }
+
+  private mergeDigResults(current: DigBrushResult | undefined, next: DigBrushResult | undefined): DigBrushResult | undefined {
+    if (!next) {
+      return current;
+    }
+
+    if (!current) {
+      return {
+        ...next,
+        inventoryDelta: { ...next.inventoryDelta },
+        digDelta: {
+          removedSamples: next.digDelta.removedSamples.map((sample) => ({
+            coordinate: { ...sample.coordinate },
+            material: sample.material,
+            units: sample.units,
+          })),
+        },
+      };
+    }
+
+    const inventoryDelta: Partial<Record<OreType, number>> = { ...current.inventoryDelta };
+    for (const oreType of ORE_TYPES) {
+      const units = (next.inventoryDelta[oreType] ?? 0) + (inventoryDelta[oreType] ?? 0);
+      if (units > 0) {
+        inventoryDelta[oreType] = units;
+      }
+    }
+
+    return {
+      removedMaterialUnits: current.removedMaterialUnits + next.removedMaterialUnits,
+      inventoryDelta,
+      oxygenCost: current.oxygenCost + next.oxygenCost,
+      recoveredOxygen: current.recoveredOxygen + next.recoveredOxygen,
+      slowedByHardness: current.slowedByHardness || next.slowedByHardness,
+      digDelta: {
+        removedSamples: [
+          ...current.digDelta.removedSamples,
+          ...next.digDelta.removedSamples.map((sample) => ({
+            coordinate: { ...sample.coordinate },
+            material: sample.material,
+            units: sample.units,
+          })),
+        ],
+      },
+    };
+  }
+
   private consumeOxygen(amount: number): void {
     const run = this.requireRun();
     const actualCost = this.buffs.getOxygenCost(Math.max(0, amount), this.activeBuffsValue);
     run.oxygen = Math.max(0, run.oxygen - actualCost);
+  }
+
+  private recoverOxygen(amount: number): void {
+    if (amount <= 0) {
+      return;
+    }
+
+    const run = this.requireRun();
+    run.oxygen = Math.min(run.maxOxygen, run.oxygen + amount);
   }
 
   private refreshDepth(): void {
@@ -265,10 +413,12 @@ export class ContinuousRunManager {
   private refreshStatsFromActiveBuffs(): void {
     const save = this.saveValue ?? this.state.save;
     const stats = this.buffs.applyToStats(getPlayerStats(save), this.activeBuffsValue);
+    const modifiers = this.buffs.getModifiers(this.activeBuffsValue);
     const run = this.requireRun();
     this.statsValue = stats;
     run.backpackCapacity = stats.backpackCapacity;
     run.activeBuffs = [...this.activeBuffsValue];
+    this.terrain.setGenerationOptions({ rareOreBonus: modifiers.rareOreBonus });
   }
 
   private createResult(type: ContinuousRunActionType): ContinuousRunActionResult {
@@ -279,6 +429,13 @@ export class ContinuousRunManager {
       run: cloneRunState(this.requireRun()),
       rewardChoices: pendingReward?.choices,
       rewardReason: pendingReward?.reason,
+    };
+  }
+
+  private clampToPlayableDepth(position: ContinuousPosition): ContinuousPosition {
+    return {
+      x: position.x,
+      y: Math.max(RUN_CONFIG.surfaceDepth, position.y),
     };
   }
 

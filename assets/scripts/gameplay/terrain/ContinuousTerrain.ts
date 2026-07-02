@@ -11,6 +11,11 @@ import { TERRAIN_CONFIG } from './TerrainConfig';
 
 export interface ContinuousTerrainOptions {
   seed: number;
+  rareOreBonus?: number;
+}
+
+export interface ContinuousTerrainGenerationOptions {
+  rareOreBonus: number;
 }
 
 const GOLDEN_RATIO_32 = 0x9e3779b9;
@@ -18,9 +23,13 @@ const GOLDEN_RATIO_32 = 0x9e3779b9;
 export class ContinuousTerrain {
   private readonly seed: number;
   private readonly materialOverrides = new Map<string, TerrainMaterial>();
+  private generationOptions: ContinuousTerrainGenerationOptions = {
+    rareOreBonus: 0,
+  };
 
   public constructor(options: ContinuousTerrainOptions) {
     this.seed = Math.max(1, Math.floor(options.seed));
+    this.generationOptions.rareOreBonus = Math.max(0, options.rareOreBonus ?? 0);
   }
 
   public sample(position: ContinuousPosition): TerrainSample {
@@ -36,7 +45,8 @@ export class ContinuousTerrain {
   }
 
   public sampleAtCoordinate(coordinate: TerrainSampleCoordinate): TerrainSample {
-    if (coordinate.y <= this.toSampleCoordinate(TERRAIN_CONFIG.surfaceY)) {
+    const sampleCenter = this.getSampleCenter(coordinate);
+    if (sampleCenter.y <= TERRAIN_CONFIG.surfaceY) {
       return {
         material: 'air',
         hardness: 0,
@@ -47,7 +57,7 @@ export class ContinuousTerrain {
     const material = this.materialOverrides.get(key) ?? this.generateMaterial(
       coordinate.x,
       coordinate.y,
-      this.getSampleCenter(coordinate).y,
+      sampleCenter.y,
     );
     return {
       material,
@@ -75,12 +85,16 @@ export class ContinuousTerrain {
     }
   }
 
+  public setGenerationOptions(options: Partial<ContinuousTerrainGenerationOptions>): void {
+    this.generationOptions = {
+      ...this.generationOptions,
+      rareOreBonus: Math.max(0, options.rareOreBonus ?? this.generationOptions.rareOreBonus),
+    };
+  }
+
   private generateMaterial(sampleX: number, sampleY: number, depth: number): TerrainMaterial {
     const oxygenChance = depth >= TERRAIN_CONFIG.oxygenMinDepth ? TERRAIN_CONFIG.oxygenChance : 0;
-    const oreChance = Math.min(
-      TERRAIN_CONFIG.maxOreChance,
-      TERRAIN_CONFIG.baseOreChance + depth * TERRAIN_CONFIG.oreChanceDepthGrowth,
-    );
+    const oreChance = getContinuousOreChance(depth, this.generationOptions.rareOreBonus);
     const stoneChance = Math.min(
       TERRAIN_CONFIG.maxStoneChance,
       TERRAIN_CONFIG.baseStoneChance + depth * TERRAIN_CONFIG.stoneChanceDepthGrowth,
@@ -154,4 +168,13 @@ export class ContinuousTerrain {
     hash = Math.imul(hash ^ (hash >>> 15), 0x846ca68b);
     return (hash ^ (hash >>> 16)) >>> 0;
   }
+}
+
+export function getContinuousOreChance(depth: number, rareOreBonus = 0): number {
+  const depthRatio = Math.max(0, Math.min(1, depth / TERRAIN_CONFIG.orePeakDepth));
+  const easedDepthRatio = depthRatio * depthRatio * (3 - 2 * depthRatio);
+  const depthChance =
+    TERRAIN_CONFIG.baseOreChance +
+    (TERRAIN_CONFIG.maxOreChance - TERRAIN_CONFIG.baseOreChance) * easedDepthRatio;
+  return Math.min(TERRAIN_CONFIG.maxOreChance, depthChance + Math.max(0, rareOreBonus));
 }

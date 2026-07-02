@@ -38,6 +38,23 @@ const ORE_ICON_COLORS: Partial<Record<TileType, Color>> = {
   obsidian: UiColors.tileObsidian,
 };
 
+const ORE_ART_PATHS: Partial<Record<TileType, string>> = {
+  copper: 'art/sprites/ore_copper',
+  coal: 'art/sprites/ore_coal',
+  tin: 'art/sprites/ore_tin',
+  iron: 'art/sprites/ore_iron',
+  silver: 'art/sprites/ore_silver',
+  gold: 'art/sprites/ore_gold',
+  emerald: 'art/sprites/ore_emerald',
+  crystal: 'art/sprites/ore_crystal',
+  ruby: 'art/sprites/ore_ruby',
+  obsidian: 'art/sprites/ore_obsidian',
+};
+
+const GRID_PLAYER_SIZE_RATIO = 1;
+const GRID_PLAYER_GLOW_RATIO = 0.88;
+const GRID_PLAYER_PULSE_SCALE = 1.03;
+
 export class MineGridView {
   private readonly visibleRows = 10;
   private readonly materialView: PixelMineMaterialView;
@@ -210,16 +227,17 @@ export class MineGridView {
   }
 
   private renderPlayer(x: number, y: number, cellSize: number): void {
+    const playerSize = cellSize * GRID_PLAYER_SIZE_RATIO;
     const playerRoot = this.ui.layer({
       name: 'PlayerOverlay',
       x,
       y,
-      width: cellSize * 1.45,
-      height: cellSize * 1.45,
+      width: playerSize,
+      height: playerSize,
     });
     playerRoot.setScale(new Vec3(1, 1, 1));
     tween(playerRoot)
-      .to(0.08, { scale: new Vec3(1.08, 1.08, 1) })
+      .to(0.08, { scale: new Vec3(GRID_PLAYER_PULSE_SCALE, GRID_PLAYER_PULSE_SCALE, 1) })
       .to(0.08, { scale: new Vec3(1, 1, 1) })
       .start();
 
@@ -227,21 +245,21 @@ export class MineGridView {
       name: 'PlayerGlow',
       x: 0,
       y: 0,
-      width: cellSize * 1.22,
-      height: cellSize * 1.22,
+      width: playerSize * GRID_PLAYER_GLOW_RATIO,
+      height: playerSize * GRID_PLAYER_GLOW_RATIO,
       fillColor: new Color(80, 180, 255, 82),
       parent: playerRoot,
     });
+    this.renderMinerFallback(playerRoot, playerSize);
     this.ui.image({
       name: 'MinerSprite',
       path: 'art/sprites/miner_protagonist',
       x: 0,
       y: 0,
-      width: cellSize * 1.35,
-      height: cellSize * 1.35,
+      width: playerSize,
+      height: playerSize,
       parent: playerRoot,
     });
-    this.renderMinerFallback(playerRoot, cellSize);
   }
 
   private renderMinerFallback(parent: Node, cellSize: number): void {
@@ -268,14 +286,6 @@ export class MineGridView {
   }
 
   private getTileArtPath(tileType: TileType): string | null {
-    if (tileType === 'copper') {
-      return 'art/sprites/ore_copper';
-    }
-
-    if (tileType === 'silver') {
-      return 'art/sprites/ore_silver';
-    }
-
-    return null;
+    return ORE_ART_PATHS[tileType] ?? null;
   }
 }

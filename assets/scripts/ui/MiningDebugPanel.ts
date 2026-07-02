@@ -7,11 +7,13 @@ import { upgradeManager } from '../core/UpgradeManager';
 import { ContinuousRunActionResult, ContinuousRunManager } from '../gameplay/ContinuousRunManager';
 import { InputVector } from '../gameplay/terrain/TerrainTypes';
 import { PlatformManager } from '../platform/PlatformManager';
+import { ContinuousRenderScheduler } from './ContinuousRenderScheduler';
 import { MiningScreenView } from './MiningScreenView';
 import type { MiningScreenActions, MiningScreenState, SettlementSnapshot } from './MiningScreenTypes';
 import { PlayerInputController } from './PlayerInputController';
 import { MiningDebugPanelLogPresenter } from './MiningDebugPanelLogPresenter';
 import { RunTextPresenter } from './RunTextPresenter';
+import { TerrainDigMaskPresenter } from './TerrainDigMaskPresenter';
 import { UiFactory } from './UiFactory';
 
 const { ccclass } = _decorator;
@@ -26,6 +28,8 @@ export class MiningDebugPanel extends Component {
   private lastLog = '正在读取存档...';
   private ui: UiFactory | null = null;
   private screenView: MiningScreenView | null = null;
+  private readonly continuousRenderScheduler = new ContinuousRenderScheduler();
+  private readonly terrainDigMask = new TerrainDigMaskPresenter();
   private readonly logPresenter = new MiningDebugPanelLogPresenter();
   private readonly textPresenter = new RunTextPresenter();
   private readonly inputController = new PlayerInputController({
@@ -47,16 +51,13 @@ export class MiningDebugPanel extends Component {
     void this.initializeData();
   }
 
-  public onEnable(): void {
-    this.inputController.enable();
-  }
+  public onEnable(): void { this.inputController.enable(); }
 
-  public onDisable(): void {
-    this.inputController.disable();
-  }
+  public onDisable(): void { this.inputController.disable(); }
 
   public update(deltaTime: number): void {
     this.inputController.update(deltaTime);
+    this.flushContinuousRender(deltaTime);
   }
 
   private get uiFactory(): UiFactory {
@@ -106,6 +107,7 @@ export class MiningDebugPanel extends Component {
 
     this.screen = 'home';
     this.runManager = null;
+    this.terrainDigMask.reset();
     this.pendingBuffChoices = [];
     this.rewardReason = '';
     this.render();
@@ -139,6 +141,7 @@ export class MiningDebugPanel extends Component {
   private startRun(): void {
     this.runManager = new ContinuousRunManager();
     const run = this.runManager.start(gameState.save);
+    this.terrainDigMask.reset();
     this.screen = 'running';
     this.pendingBuffChoices = [];
     this.rewardReason = '';
@@ -155,7 +158,7 @@ export class MiningDebugPanel extends Component {
     }
 
     const result = this.runManager.applyInput(input, deltaTime);
-    void this.handleRunAction(result);
+    void this.handleRunAction(result, true);
   }
 
   private async returnToSurface(): Promise<void> {
@@ -180,7 +183,7 @@ export class MiningDebugPanel extends Component {
     await this.handleRunAction(result);
   }
 
-  private async handleRunAction(result: ContinuousRunActionResult): Promise<void> {
+  private async handleRunAction(result: ContinuousRunActionResult, isContinuousInput = false): Promise<void> {
     if (result.type === 'ended') {
       this.lastSettlement = {
         run: result.run,
@@ -193,15 +196,18 @@ export class MiningDebugPanel extends Component {
       this.runManager = null;
       this.screen = 'settlement';
       this.lastLog = this.logPresenter.runEnded(this.lastSettlement, saveResult);
+      this.triggerHapticFeedback('runEnded');
       this.render();
       return;
     }
 
+    this.terrainDigMask.recordRunAction(result);
+
     if (result.rewardChoices && result.rewardChoices.length > 0) {
-      void PlatformManager.platform.vibrateShort();
       this.pendingBuffChoices = result.rewardChoices;
       this.rewardReason = result.rewardReason ?? '收集目标';
       this.screen = 'buffSelect';
+      this.triggerHapticFeedback('reward');
       this.lastLog = `触发矿工灵感：${this.rewardReason}`;
       this.render();
       return;
@@ -211,9 +217,17 @@ export class MiningDebugPanel extends Component {
       return;
     }
 
-    void PlatformManager.platform.vibrateShort();
     const oreName = result.collectedOre ? this.textPresenter.tileName(result.collectedOre) : '';
     this.lastLog = this.logPresenter.runAction(result, oreName, this.canSellAtSurface());
+    if (result.collectedOre) {
+      this.triggerHapticFeedback('oreCollect');
+    }
+
+    if (isContinuousInput) {
+      this.requestContinuousRender();
+      return;
+    }
+
     this.render();
   }
 
@@ -230,8 +244,8 @@ export class MiningDebugPanel extends Component {
       return;
     }
 
-    void PlatformManager.platform.vibrateShort();
     this.lastLog = this.logPresenter.upgradeSuccess(upgradeId, result.nextLevel, result.cost);
+    this.triggerHapticFeedback('upgrade');
     this.render();
   }
 
@@ -248,7 +262,7 @@ export class MiningDebugPanel extends Component {
       return;
     }
 
-    void PlatformManager.platform.vibrateShort();
+    this.triggerHapticFeedback('buff');
     this.screen = 'running';
     this.pendingBuffChoices = [];
     this.rewardReason = '';
@@ -257,6 +271,11 @@ export class MiningDebugPanel extends Component {
   }
 
   private render(): void {
+    this.continuousRenderScheduler.cancel();
+    this.renderView();
+  }
+
+  private renderView(): void {
     this.view.render(
       {
         screen: this.screen,
@@ -264,6 +283,7 @@ export class MiningDebugPanel extends Component {
         pendingBuffChoices: this.pendingBuffChoices,
         rewardReason: this.rewardReason,
         runManager: this.runManager,
+        terrainDigMask: this.terrainDigMask.mask,
         lastSettlement: this.lastSettlement,
         lastLog: this.lastLog,
         inputHint: this.inputController.getHint(),
@@ -271,6 +291,36 @@ export class MiningDebugPanel extends Component {
       this.actions,
     );
     this.inputController.renderOverlay();
+  }
+
+  private requestContinuousRender(): void {
+    if (this.screen !== 'running') {
+      this.render();
+      return;
+    }
+
+    this.continuousRenderScheduler.request();
+  }
+
+  private flushContinuousRender(deltaTime: number): void {
+    if (this.screen !== 'running') {
+      this.continuousRenderScheduler.cancel();
+      return;
+    }
+
+    if (this.continuousRenderScheduler.update(deltaTime)) {
+      this.renderView();
+    }
+  }
+
+  private triggerHapticFeedback(reason: string): void {
+    void PlatformManager.platform.vibrateShort().then((result) => {
+      if (!result.ok) {
+        console.warn(`[MiningDebugPanel] vibrateShort failed after ${reason}: ${result.error ?? 'unknown error'}`);
+      }
+    }).catch((error: unknown) => {
+      console.warn(`[MiningDebugPanel] vibrateShort rejected after ${reason}: ${String(error)}`);
+    });
   }
 
   private resumeRun(): void {

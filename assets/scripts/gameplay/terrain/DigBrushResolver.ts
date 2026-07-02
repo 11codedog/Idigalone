@@ -19,6 +19,7 @@ export interface DigBrushResult {
   removedMaterialUnits: number;
   inventoryDelta: Partial<Record<OreType, number>>;
   oxygenCost: number;
+  recoveredOxygen: number;
   slowedByHardness: boolean;
   digDelta: TerrainDigDelta;
 }
@@ -28,6 +29,7 @@ export class DigBrushResolver {
     const removedSamples = [];
     const inventoryDelta: Partial<Record<OreType, number>> = {};
     let oxygenCost = 0;
+    let recoveredOxygen = 0;
     let slowedByHardness = false;
 
     for (const coordinate of this.getBrushCoordinates(terrain, request.center, request.radius)) {
@@ -48,6 +50,7 @@ export class DigBrushResolver {
         units,
       });
       oxygenCost += this.getOxygenCost(sample.material) * units;
+      recoveredOxygen += this.getRecoveredOxygen(sample.material) * units;
 
       if (isOreType(sample.material)) {
         inventoryDelta[sample.material] = (inventoryDelta[sample.material] ?? 0) + units;
@@ -58,6 +61,7 @@ export class DigBrushResolver {
       removedMaterialUnits: removedSamples.reduce((sum, sample) => sum + sample.units, 0),
       inventoryDelta,
       oxygenCost,
+      recoveredOxygen,
       slowedByHardness,
       digDelta: {
         removedSamples,
@@ -100,5 +104,13 @@ export class DigBrushResolver {
     }
 
     return TILE_CONFIG[material].oxygenCost;
+  }
+
+  private getRecoveredOxygen(material: TerrainMaterial): number {
+    if (material === 'air') {
+      return 0;
+    }
+
+    return TILE_CONFIG[material].oxygenRecover;
   }
 }

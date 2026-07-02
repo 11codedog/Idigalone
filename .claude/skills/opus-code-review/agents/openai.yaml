@@ -1,0 +1,4 @@
+interface:
+  display_name: "Opus Code Review"
+  short_description: "Rigorous code review workflow for Claude Opus."
+  default_prompt: "Use this skill to review the current project changes for correctness, regressions, tests, architecture, and mobile-game constraints."
